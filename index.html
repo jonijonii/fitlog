@@ -827,6 +827,20 @@ body.sheet-open { overflow: hidden; }
 
 .custom-form { padding: 8px 2px 16px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
 
+/* ---------- CSV 내보내기 행 ---------- */
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.sheet-row:last-child { border-bottom: 0; }
+
+.sheet-name { flex: 1; font-size: 14px; font-weight: 600; }
+.sheet-row .btn { flex: 0 0 auto; min-height: 44px; padding: 8px 14px; font-size: 14px; }
+
 /* ---------- 에러 표시 ---------- */
 
 .error-bar {
@@ -3570,8 +3584,49 @@ window.FitLog = window.FitLog || {};
     return 'share';
   }
 
+  /**
+   * 표를 클립보드에 복사한다.
+   *
+   * 파일로 주고받는 게 폰에서는 늘 성가시다 — 공유 시트에 낯선 앱이 섞여 나오고,
+   * 저장한 뒤 다시 찾아 열어야 한다. 복사해서 카톡·메일·구글시트에 바로 붙여넣는 쪽이
+   * 오히려 빠를 때가 많아서 선택지로 같이 둔다.
+   *
+   * @returns {boolean} 복사 성공 여부
+   */
+  function copyText(text) {
+    // 최신 방식 — 보안 컨텍스트(HTTPS)에서만 동작한다
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)['catch'](function () { legacyCopy(text); });
+      return true;
+    }
+    return legacyCopy(text);
+  }
+
+  /** 구형 브라우저용 — 화면 밖 textarea 를 만들어 선택 후 복사 */
+  function legacyCopy(text) {
+    var box = document.createElement('textarea');
+    box.value = text;
+    box.setAttribute('readonly', '');
+    box.style.position = 'fixed';
+    box.style.left = '-9999px';
+    document.body.appendChild(box);
+
+    var ok = false;
+    try {
+      box.select();
+      box.setSelectionRange(0, text.length);   // iOS 는 select() 만으로는 부족하다
+      ok = document.execCommand('copy');
+    } catch (e) {
+      ok = false;
+    }
+
+    document.body.removeChild(box);
+    return ok;
+  }
+
   FitLog.share = {
     deliverFile: deliverFile,
+    copyText: copyText,
     downloadFile: downloadFile,
     canShareFile: canShareFile
   };
@@ -5696,26 +5751,42 @@ window.FitLog = window.FitLog || {};
     wrap.appendChild(supplementManageCard(state));
 
     /* 데이터 — 용도가 다른 두 가지를 섞어 두면 친구들이 헷갈린다. 나눠서 설명한다. */
-    var csvButtons = FitLog.csv.SHEETS.map(function (sheet) {
-      var btn = el('button', { class: 'btn btn-block', type: 'button',
-                               text: sheet.label + ' 내보내기' });
-      btn.addEventListener('click', function () {
+    // 표마다 두 갈래를 준다: 파일로 받기 / 복사해서 바로 붙여넣기.
+    // 폰에서 파일 주고받기가 성가실 때 복사가 더 빠르다.
+    var csvRows = FitLog.csv.SHEETS.map(function (sheet) {
+      var fileBtn = el('button', { class: 'btn', type: 'button', text: '파일로 받기' });
+      fileBtn.addEventListener('click', function () {
         FitLog.csv.exportSheet(sheet.key, function (how) {
           if (how === 'cancelled') return;
           ui.toast(how === 'share'
-            ? sheet.label + ' 파일 만들었어. "파일에 저장" 을 고르면 돼.'
+            ? '공유 창에서 "파일에 저장" 을 고르면 돼.'
             : sheet.label + ' 파일 저장했어.');
         });
       });
-      return btn;
+
+      var copyBtn = el('button', { class: 'btn', type: 'button', text: '복사' });
+      copyBtn.addEventListener('click', function () {
+        var text = sheet.build(store.load());
+        var done = FitLog.share.copyText(text);
+        ui.toast(done
+          ? sheet.label + ' 복사했어. 카톡·메일·구글시트에 붙여넣기 해.'
+          : '복사가 안 됐어. 파일로 받기를 써줘.');
+      });
+
+      return el('div', { class: 'sheet-row' }, [
+        el('span', { class: 'sheet-name', text: sheet.label }),
+        fileBtn, copyBtn
+      ]);
     });
 
     wrap.appendChild(ui.card('엑셀로 보기 (CSV)', [
       el('p', { class: 'card-note',
-        text: '엑셀·구글시트에서 바로 열려. 기록을 훑어보거나 트레이너에게 보낼 때 써. ' +
-              '폰에서는 공유 창이 뜨는데 "파일에 저장" 을 고르면 파일 앱에 들어가. ' +
-              '메일이나 메신저로 바로 보낼 수도 있어.' }),
-      el('div', { class: 'btn-stack' }, csvButtons)
+        text: '엑셀·구글시트에서 열리는 표야. 기록을 훑어보거나 트레이너에게 보낼 때 써.' }),
+      el('div', {}, csvRows),
+      el('p', { class: 'card-note',
+        text: '"파일로 받기" 는 공유 창이 뜨는데, 앱 목록에 낯선 게 섞여 나와도 정상이야. ' +
+              '거기서 "파일에 저장" 을 고르면 파일 앱에 들어가. ' +
+              '그게 번거로우면 "복사" 를 눌러서 카톡이나 구글시트에 바로 붙여넣어도 돼.' })
     ]));
 
     wrap.appendChild(ui.card('백업 (기기 변경용)', [
@@ -6244,7 +6315,7 @@ window.FitLog = window.FitLog || {};
   var DEFAULT_TAB = 'today';
 
   // 빌드를 구분하는 표식. 폰이 캐시된 옛 버전을 잡고 있는지 설정 탭에서 확인할 수 있다.
-  var BUILD = '2026-08-25.6';
+  var BUILD = '2026-08-25.7';
 
   /* ---------- 에러 표시 ----------
      조용히 멈추는 게 가장 나쁘다. 잡히지 않은 예외를 화면에 띄워
