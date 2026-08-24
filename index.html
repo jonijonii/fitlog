@@ -3173,7 +3173,9 @@ window.FitLog = window.FitLog || {};
     if (shortDays.length) {
       out.push({
         level: 'warn',
-        message: '근력운동 한 날 단백질이 부족했어 (' + shortDays.length + '일). ' +
+        // 이건 최근 7일을 본 판정이다. '이번 주' 를 빼면 오늘 얘기로 읽혀서
+        // 오늘 아무것도 안 먹은 날에도 방금 생긴 경고처럼 보인다.
+        message: '이번 주에 근력운동 한 날 단백질이 부족했어 (' + shortDays.length + '일). ' +
           '운동한 날 단백질이 모자라면 근성장에 손해야.'
       });
     }
@@ -6563,7 +6565,7 @@ window.FitLog = window.FitLog || {};
   var DEFAULT_TAB = 'today';
 
   // 빌드를 구분하는 표식. 폰이 캐시된 옛 버전을 잡고 있는지 설정 탭에서 확인할 수 있다.
-  var BUILD = '2026-08-25.8';
+  var BUILD = '2026-08-25.9';
 
   /* ---------- 에러 표시 ----------
      조용히 멈추는 게 가장 나쁘다. 잡히지 않은 예외를 화면에 띄워
@@ -6643,11 +6645,13 @@ window.FitLog = window.FitLog || {};
   }
 
   var lastTab = null;
+  var renderedDate = null;
 
   function render() {
     if (!store.hasProfile()) return;
 
     var tab = currentTab();
+    renderedDate = store.todayKey();
 
     // 체크박스 하나 눌러도 화면을 통째로 다시 그린다. 그때마다 맨 위로 올려버리면
     // 보충제 여러 개를 연달아 체크할 수가 없다. 탭이 바뀔 때만 위로 올린다.
@@ -6666,6 +6670,20 @@ window.FitLog = window.FitLog || {};
   }
 
   function onHashChange() { render(); }
+
+  /* ---------- 날짜가 바뀌었는지 ----------
+     홈 화면에 추가한 앱은 껐다 켜지 않으면 계속 살아 있다. 자정을 넘겨도
+     다시 그리지 않으면 '오늘' 탭이 어제 기록을 그대로 붙들고 있게 된다.
+     앱이 다시 앞으로 나올 때마다 날짜를 확인한다. */
+
+  function checkDateRollover() {
+    if (!store.hasProfile()) return false;
+    if (renderedDate === null) return false;
+    if (renderedDate === store.todayKey()) return false;
+
+    render();
+    return true;
+  }
 
   /* ---------- 부팅 ---------- */
 
@@ -6712,11 +6730,26 @@ window.FitLog = window.FitLog || {};
   }
 
   window.addEventListener('hashchange', onHashChange);
+
+  // 앱이 앞으로 나오는 경로가 여럿이라 셋 다 건다.
+  // visibilitychange 는 홈 화면 앱을 다시 열 때, focus 는 브라우저 탭 전환,
+  // pageshow 는 뒤로가기 캐시에서 복원될 때 각각 걸린다.
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) checkDateRollover();
+  });
+  window.addEventListener('focus', checkDateRollover);
+  window.addEventListener('pageshow', checkDateRollover);
+
   window.addEventListener('load', registerServiceWorker);
   window.addEventListener('load', requestPersistentStorage);
   document.addEventListener('DOMContentLoaded', boot);
 
-  FitLog.router = { render: render, currentTab: currentTab, TABS: TABS };
+  FitLog.router = {
+    render: render,
+    currentTab: currentTab,
+    checkDateRollover: checkDateRollover,
+    TABS: TABS
+  };
   FitLog.app = { boot: boot, BUILD: BUILD, storageStatusText: storageStatusText };
 })(window.FitLog);
 
