@@ -932,7 +932,8 @@ window.FitLog = window.FitLog || {};
       dailyLogs: {},
       bodyLogs: [],
       customFoods: [],
-      favorites: []     // 'template:<id>' / 'food:<id>' / 'custom:<id>'
+      favorites: [],    // 'template:<id>' / 'food:<id>' / 'custom:<id>'
+      meta: { lastBackupAt: null }   // 마지막 백업 시각. 데이터 유실 노출도를 보여주는 데 쓴다
     };
   }
 
@@ -1012,6 +1013,9 @@ window.FitLog = window.FitLog || {};
     // favorites 는 나중에 추가된 필드다. 값을 바꾸는 게 아니라 빈 배열을 채우기만 하면 되므로
     // 스키마 버전을 올리지 않고 여기서 정규화한다. (goals 처럼 기존 값을 '변환'해야 할 때만 마이그레이션)
     base.favorites = Array.isArray(state.favorites) ? state.favorites : [];
+
+    var meta = state.meta && typeof state.meta === 'object' ? state.meta : {};
+    base.meta = { lastBackupAt: meta.lastBackupAt || null };
 
     base.dailyLogs = {};
     if (state.dailyLogs && typeof state.dailyLogs === 'object') {
@@ -1302,6 +1306,41 @@ window.FitLog = window.FitLog || {};
     return on;
   }
 
+  /* ---------- 백업 이력 ----------
+     localStorage 는 영구 저장이 아니다. iOS 는 한동안 안 쓴 사이트의 저장 데이터를
+     지울 수 있고, 브라우저 기록을 지워도 같이 사라진다.
+     유일한 확실한 대비가 백업이므로, 마지막으로 언제 백업했는지를 기록해 두고
+     너무 오래됐으면 알려준다. */
+
+  function markBackedUp(when) {
+    var at = when || new Date().toISOString();
+    update(function (state) {
+      state.meta.lastBackupAt = at;
+      return state;
+    });
+    return at;
+  }
+
+  /** 마지막 백업 이후 며칠 지났는지. 백업한 적이 없으면 null. */
+  function daysSinceBackup() {
+    var at = load().meta.lastBackupAt;
+    if (!at) return null;
+
+    var then = new Date(at).getTime();
+    if (isNaN(then)) return null;
+
+    return Math.floor((Date.now() - then) / 86400000);
+  }
+
+  /** 기록이 며칠치 쌓였는지 — 잃을 게 얼마나 되는지 판단하는 데 쓴다 */
+  function recordedDayCount() {
+    var logs = load().dailyLogs;
+    return Object.keys(logs).filter(function (d) {
+      var log = logs[d];
+      return log.meals.length || log.workouts.length || log.supplementsTaken.length;
+    }).length;
+  }
+
   /* ---------- 즐겨찾기 ---------- */
 
   function favKey(kind, id) { return kind + ':' + id; }
@@ -1387,6 +1426,9 @@ window.FitLog = window.FitLog || {};
     removeSupplement: removeSupplement,
     isTaken: isTaken,
     toggleTaken: toggleTaken,
+    markBackedUp: markBackedUp,
+    daysSinceBackup: daysSinceBackup,
+    recordedDayCount: recordedDayCount,
     isFavorite: isFavorite,
     toggleFavorite: toggleFavorite,
     addCustomFood: addCustomFood,
@@ -2541,8 +2583,14 @@ window.FitLog = window.FitLog || {};
      종합비타민에 이미 비타민 D 가 들어 있는데 비타민 D 를 따로 먹는 경우처럼,
      같은 영양소를 두 개 이상에서 받고 있으면 알려준다. UL 을 넘지 않아도 알 가치가 있다. */
 
-  function duplicates(supplements) {
+  /**
+   * @param {object[]} supplements
+   * @param {object} [microTargets] 있으면 '하루 필요량의 몇 배' 까지 알려준다.
+   *   합계 숫자만 던지면 그게 많은 건지 적은 건지 알 수 없다는 피드백을 반영한 것.
+   */
+  function duplicates(supplements, microTargets) {
     var active = (supplements || []).filter(function (s) { return s && s.enabled !== false; });
+    var targets = microTargets || {};
     var out = [];
 
     FitLog.nutrition.NUTRIENTS.forEach(function (n) {
@@ -2555,17 +2603,37 @@ window.FitLog = window.FitLog || {};
         return sum + Number(s.nutrients[n.key]) * (Number(s.dailyDoses) || 1);
       }, 0);
 
+      var rounded = Math.round(total * 10) / 10;
+      var target = Number(targets[n.key]) || 0;
+
+      // 보충제·영양소 이름은 '비타민 D', 'K2' 처럼 영문/숫자로 끝나는 게 많다.
+      // 이름 바로 뒤에 은/는·이/가를 붙이면 조사가 틀리므로, 이름 뒤에는 항상 구분자를 둔다.
+      var msg = sources.map(function (s) { return s.name; }).join(', ') +
+        ' — 여기에 ' + n.name + ' 성분이 겹쳐. 보충제에서만 하루 ' + rounded + n.unit;
+
+      if (target) {
+        msg += ', 하루 필요량(' + target + n.unit + ')의 ' +
+          Math.round((total / target) * 10) / 10 + '배';
+      }
+
+      if (n.ul && n.ulSource === 'supplement' && total > n.ul) {
+        msg += '. 상한섭취량(' + n.ul + n.unit + ')을 넘었어 — 제품 함량 확인해 봐.';
+      } else if (n.ul && total > n.ul) {
+        msg += '. 보충제만으로 상한(' + n.ul + n.unit + ')을 넘어 — 제품 함량 확인해 봐.';
+      } else if (n.ul) {
+        msg += '. 상한 ' + n.ul + n.unit + ' 아래야.';
+      } else {
+        msg += '.';
+      }
+
       out.push({
         key: n.key,
         name: n.name,
         unit: n.unit,
-        total: Math.round(total * 10) / 10,
+        total: rounded,
+        target: target || null,
         sources: sources.map(function (s) { return s.name; }),
-        // 보충제·영양소 이름은 '비타민 D', 'K2' 처럼 영문/숫자로 끝나는 게 많다.
-        // 이름 바로 뒤에 은/는·이/가를 붙이면 조사가 틀리므로, 이름 뒤에는 항상 구분자를 둔다.
-        message: sources.map(function (s) { return s.name; }).join(', ') +
-          ' — 여기에 ' + n.name + ' 성분이 겹쳐. 합치면 하루 ' +
-          (Math.round(total * 10) / 10) + n.unit + ' 정도야.'
+        message: msg
       });
     });
 
@@ -2709,11 +2777,11 @@ window.FitLog = window.FitLog || {};
   }
 
   /** 오늘 화면에 띄울 것 전부를 한 번에 계산한다. */
-  function review(supplements, foodNutrients) {
+  function review(supplements, foodNutrients, microTargets) {
     var supp = dailyNutrients(supplements);
     return {
       nutrients: supp,
-      duplicates: duplicates(supplements),
+      duplicates: duplicates(supplements, microTargets),
       ul: ulWarnings(foodNutrients, supp),
       interactions: interactions(supplements)
     };
@@ -2917,6 +2985,89 @@ window.FitLog = window.FitLog || {};
     return out;
   }
 
+  /**
+   * 오늘 하루치 리포트.
+   *
+   * 주간 평균은 '요즘 어떤가' 를 보는 것이고, 오늘 화면에서 알고 싶은 건
+   * '지금 뭐가 모자라고 뭐가 넘쳤나' 다. 그래서 오늘 카드는 이 함수를 쓴다.
+   * 보충제는 매일 먹는 전제라 식사 기록이 없어도 합산에 들어간다.
+   */
+  function todayReport(state, dateKey) {
+    var key = dateKey || FitLog.store.todayKey();
+    var day = FitLog.store.getDay(key);
+    var targets = state.targets;
+
+    var food = FitLog.foods.sum(day.meals.map(function (m) { return m.nutrients; }));
+    var supp = FitLog.supplements.dailyNutrients(state.supplements);
+
+    var total = {};
+    FitLog.foods.KEYS.forEach(function (k) {
+      total[k] = (Number(food[k]) || 0) + (Number(supp[k]) || 0);
+    });
+    total.protein = (Number(food.protein) || 0) + (Number(supp.protein) || 0);
+
+    var macros = [
+      { key: 'kcal', name: '칼로리', unit: 'kcal', target: targets.calories },
+      { key: 'protein', name: '단백질', unit: 'g', target: targets.protein },
+      { key: 'carbs', name: '탄수화물', unit: 'g', target: targets.carbs },
+      { key: 'fat', name: '지방', unit: 'g', target: targets.fat },
+      { key: 'fiber', name: '식이섬유', unit: 'g', target: targets.fiber }
+    ].map(function (m) {
+      m.value = Math.round((total[m.key] || 0) * 10) / 10;
+      m.ratio = m.target ? m.value / m.target : 0;
+      m.level = levelOf(m.value, m.target, { overRatio: MACRO_OVER });
+      return m;
+    });
+
+    var items = FitLog.nutrition.NUTRIENTS.map(function (n) {
+      var forUL = n.ulSource === 'supplement' ? (Number(supp[n.key]) || 0) : total[n.key];
+      var target = targets.micros[n.key];
+      var value = Math.round((total[n.key] || 0) * 10) / 10;
+
+      return {
+        key: n.key,
+        name: n.name,
+        unit: n.unit,
+        value: value,
+        target: target,
+        ratio: target ? value / target : 0,
+        ul: n.ul,
+        ulKind: n.ulKind || null,
+        level: levelOf(value, target, { ul: n.ul, ulValue: forUL }),
+        fromFood: Math.round((Number(food[n.key]) || 0) * 10) / 10,
+        fromSupplement: Math.round((Number(supp[n.key]) || 0) * 10) / 10
+      };
+    });
+
+    return { date: key, hasMeals: day.meals.length > 0, macros: macros, items: items };
+  }
+
+  /**
+   * 영양소 한 항목을 '지금 얼마나 먹었고 하루 필요량 대비 어떤지' 한 문장으로.
+   * 이름 뒤에 조사를 붙이지 않는다 — '비타민 D' 처럼 영문으로 끝나는 이름이 많다.
+   */
+  function itemMessage(item) {
+    var pct = Math.round(item.ratio * 100);
+    var head = item.name + ' — 오늘 ' + item.value + item.unit + ', 하루 필요량(' +
+      item.target + item.unit + ')의 ' + pct + '%';
+
+    if (item.level.key === 'over') {
+      var limitName = item.ulKind === 'goal' ? '목표섭취량' : '상한섭취량';
+      return head + '. ' + limitName + '(' + item.ul + item.unit + ')을 넘었어. ' +
+        (item.ulKind === 'goal'
+          ? '짠 음식을 줄이는 게 좋아.'
+          : '제품 함량 확인해 보고, 계속 이 수준이면 전문가랑 상의해 봐.');
+    }
+
+    if (item.ratio > 1 && item.ul) {
+      return head + '야. 상한(' + item.ul + item.unit + ') 아래라 당장 문제는 아니야.';
+    }
+    if (item.ratio > 1) return head + '야.';
+
+    var short = Math.round((item.target - item.value) * 10) / 10;
+    return head + '. ' + short + item.unit + ' 모자라.';
+  }
+
   /* ---------- 주간 운동 집계 ---------- */
 
   function workoutSummary(state, endDateKey, dayCount) {
@@ -2968,7 +3119,19 @@ window.FitLog = window.FitLog || {};
     { key: 'back',  label: '등' }
   ];
 
-  /* ---------- 운동 판정 6종 ---------- */
+  /* ---------- 운동 판정 ----------
+   *
+   * 처음엔 6종이었는데 4종을 걷어냈다. 사용자 요청:
+   * "운동에 대해 독려하는 내용은 빼줘. 필요한 정보만 받고 싶어."
+   *
+   * 뺀 것 — '근력운동 N회 남았어'(잔소리), '하체·코어가 빠져 있어'(잔소리),
+   *         'N일째 운동 기록이 없네'(잔소리), '계획 다 채웠어'(칭찬).
+   *   계획 대비 횟수는 주간 탭에 '근력 1/3회' 라는 숫자로 이미 있다. 문장으로 또 말할 이유가 없다.
+   *
+   * 남긴 것 — 둘 다 '모르면 손해 보는 사실' 이다:
+   *   1) 감량 중 근력운동 0회 → 빠지는 무게에 근육이 섞인다
+   *   2) 근력운동 한 날 단백질 부족 → 그날 운동이 근성장으로 안 이어진다
+   */
 
   function workoutJudgments(state, endDateKey) {
     var today = endDateKey || FitLog.store.todayKey();
@@ -2976,25 +3139,14 @@ window.FitLog = window.FitLog || {};
     var goals = FitLog.calc.normalizeGoals(state.profile.goals);
     var out = [];
 
-    // 2. 감량 목표인데 주간 근력운동이 0회 — 가장 중요하므로 맨 앞에 둔다
     if (goals.indexOf('loseFat') >= 0 && week.strength === 0) {
       out.push({
         level: 'warn',
-        message: '이번 주 근력운동이 아직 없어. 체중을 줄이는 중엔 근력운동을 안 하면 ' +
-          '빠지는 무게에 근육이 섞여. 한 번이라도 넣어 보자.'
+        message: '이번 주 근력운동이 0회야. 체중을 줄이는 중에 근력운동이 없으면 ' +
+          '빠지는 무게에 근육이 섞여.'
       });
     }
 
-    // 1. 계획 대비 남은 근력운동
-    if (week.strength < week.planStrength) {
-      out.push({
-        level: 'tip',
-        message: '근력운동 ' + (week.planStrength - week.strength) + '회 남았어. ' +
-          '(이번 주 ' + week.strength + '/' + week.planStrength + '회)'
-      });
-    }
-
-    // 3. 근력운동 한 날 단백질이 목표의 80% 미만
     var shortDays = [];
     week.days.forEach(function (key) {
       var log = state.dailyLogs[key];
@@ -3009,40 +3161,6 @@ window.FitLog = window.FitLog || {};
         level: 'warn',
         message: '근력운동 한 날 단백질이 부족했어 (' + shortDays.length + '일). ' +
           '운동한 날 단백질이 모자라면 근성장에 손해야.'
-      });
-    }
-
-    // 4. 최근 4주간 한 번도 안 한 부위
-    var fourWeeks = workoutSummary(state, today, 28);
-    if (fourWeeks.strength > 0) {
-      var missing = BODY_PARTS.filter(function (p) {
-        return fourWeeks.bodyParts.indexOf(p.key) < 0;
-      });
-      if (missing.length && missing.length < BODY_PARTS.length) {
-        out.push({
-          level: 'tip',
-          message: missing.map(function (p) { return p.label; }).join('·') +
-            ' 운동이 4주째 빠져 있어. 한 번 넣어 보는 게 좋아.'
-        });
-      }
-    }
-
-    // 5. 연속 휴식 3일 이상
-    var rest = restStreak(state, today);
-    if (rest >= 3) {
-      out.push({
-        level: 'tip',
-        message: rest + '일째 운동 기록이 없네. 가볍게 걷는 것도 기록에 남으니까 부담 갖지 말고.'
-      });
-    }
-
-    // 6. 주간 계획 100% 달성
-    if (week.strength >= week.planStrength && week.cardio >= week.planCardio &&
-        (week.planStrength + week.planCardio) > 0) {
-      out.push({
-        level: 'good',
-        message: '이번 주 운동 계획 다 채웠어. 근력 ' + week.strength + '/' + week.planStrength +
-          ', 유산소 ' + week.cardio + '/' + week.planCardio + '.'
       });
     }
 
@@ -3123,6 +3241,8 @@ window.FitLog = window.FitLog || {};
     shiftDays: shiftDays,
     lastDays: lastDays,
     nutritionReport: nutritionReport,
+    todayReport: todayReport,
+    itemMessage: itemMessage,
     priority: priority,
     workoutSummary: workoutSummary,
     restStreak: restStreak,
@@ -3387,9 +3507,10 @@ window.FitLog = window.FitLog || {};
 
   /** 현재 데이터를 JSON 파일로 다운로드 */
   function exportData() {
-    var state = store.load();
-    var payload = JSON.parse(JSON.stringify(state));
-    payload.exportedAt = new Date().toISOString();
+    // 내보낸 시각을 먼저 남긴다 — 그래야 백업 파일 안에도 '언제 백업한 것' 인지가 들어간다
+    var at = store.markBackedUp();
+    var payload = JSON.parse(JSON.stringify(store.load()));
+    payload.exportedAt = at;
 
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
@@ -3455,6 +3576,236 @@ window.FitLog = window.FitLog || {};
     exportData: exportData,
     validateBackup: validateBackup,
     importFile: importFile
+  };
+})(window.FitLog);
+
+</script>
+<script>
+/* csv.js — 기록을 엑셀에서 열 수 있는 CSV 로 내보낸다
+ *
+ * JSON 백업과 용도가 다르다:
+ *   - JSON: 기기를 바꿀 때 그대로 복원하기 위한 파일. 사람이 열어볼 것이 아니다.
+ *   - CSV : 사람이 엑셀에서 보고, 트레이너에게 보내기 위한 표. 되돌릴 수는 없다.
+ * 그래서 둘 중 하나를 없애지 않고 나란히 둔다.
+ *
+ * ⚠️ 한글 CSV 는 BOM 이 없으면 엑셀에서 글자가 깨진다. 앞에 ﻿ 를 반드시 붙일 것.
+ */
+
+window.FitLog = window.FitLog || {};
+
+(function (FitLog) {
+  'use strict';
+
+  var store = FitLog.store;
+  var DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
+
+  /** 쉼표·따옴표·줄바꿈이 든 값은 따옴표로 감싸고 내부 따옴표는 두 번 쓴다 (RFC 4180) */
+  function cell(value) {
+    if (value === null || value === undefined) return '';
+    var s = String(value);
+    if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  function toCsv(rows) {
+    return rows.map(function (row) {
+      return row.map(cell).join(',');
+    }).join('\r\n');
+  }
+
+  function round1(n) {
+    return Math.round((Number(n) || 0) * 10) / 10;
+  }
+
+  function dayName(dateKey) {
+    var p = dateKey.split('-');
+    return DAY_NAMES[new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getDay()];
+  }
+
+  /** 기록이 있는 날짜를 과거 → 최근 순으로 */
+  function recordedDates(state) {
+    var seen = {};
+    Object.keys(state.dailyLogs).forEach(function (d) {
+      var log = state.dailyLogs[d];
+      if (log.meals.length || log.workouts.length || log.supplementsTaken.length) seen[d] = true;
+    });
+    state.bodyLogs.forEach(function (l) { seen[l.date] = true; });
+
+    return Object.keys(seen).sort();
+  }
+
+  /* ---------- 1. 일별 요약 ---------- */
+
+  function dailySummary(state) {
+    var targets = state.targets;
+    var supp = FitLog.supplements.dailyNutrients(state.supplements);
+    var activeSupps = state.supplements.filter(function (s) { return s.enabled !== false; }).length;
+
+    var bodyByDate = {};
+    state.bodyLogs.forEach(function (l) { bodyByDate[l.date] = l; });
+
+    var rows = [[
+      '날짜', '요일',
+      '칼로리', '목표칼로리', '달성률(%)',
+      '단백질(g)', '목표단백질(g)',
+      '탄수화물(g)', '지방(g)', '식이섬유(g)', '나트륨(mg)',
+      '식사수', '근력운동(분)', '유산소(분)',
+      '보충제체크', '보충제등록수',
+      '체중(kg)', '골격근량(kg)', '체지방률(%)', '허리둘레(cm)',
+      '메모'
+    ]];
+
+    recordedDates(state).forEach(function (date) {
+      var log = state.dailyLogs[date] || store.emptyDay();
+      var food = FitLog.foods.sum(log.meals.map(function (m) { return m.nutrients; }));
+
+      // 보충제는 매일 먹는 전제라 그날 하나라도 체크했으면 하루분을 더한다
+      var tookAny = log.supplementsTaken.length > 0;
+      var kcal = round1(food.kcal + (tookAny ? supp.kcal : 0));
+      var protein = round1(food.protein + (tookAny ? supp.protein : 0));
+
+      var strengthMin = 0, cardioMin = 0;
+      log.workouts.forEach(function (w) {
+        if (w.type === 'strength') strengthMin += Number(w.minutes) || 0;
+        else cardioMin += Number(w.minutes) || 0;
+      });
+
+      var body = bodyByDate[date] || {};
+
+      rows.push([
+        date, dayName(date),
+        kcal, targets.calories, targets.calories ? Math.round(kcal / targets.calories * 100) : '',
+        protein, targets.protein,
+        round1(food.carbs), round1(food.fat), round1(food.fiber), Math.round(food.sodium),
+        log.meals.length, strengthMin, cardioMin,
+        log.supplementsTaken.length, activeSupps,
+        body.weight === undefined ? '' : body.weight,
+        body.skeletalMuscle === undefined || body.skeletalMuscle === null ? '' : body.skeletalMuscle,
+        body.bodyFatPct === undefined || body.bodyFatPct === null ? '' : body.bodyFatPct,
+        body.waistCm === undefined || body.waistCm === null ? '' : body.waistCm,
+        log.note || ''
+      ]);
+    });
+
+    return toCsv(rows);
+  }
+
+  /* ---------- 2. 식사 상세 ---------- */
+
+  var MEAL_LABEL = { breakfast: '아침', lunch: '점심', dinner: '저녁', snack: '간식' };
+  var MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'snack'];
+
+  function portionLabel(p) {
+    var hit = FitLog.templates.PORTIONS.filter(function (x) { return x.value === p; })[0];
+    return hit ? hit.label : String(p);
+  }
+
+  function mealDetail(state) {
+    var rows = [[
+      '날짜', '요일', '끼니', '메뉴', '양', '시각',
+      '칼로리', '단백질(g)', '탄수화물(g)', '지방(g)', '식이섬유(g)', '나트륨(mg)',
+      '재료', '메모'
+    ]];
+
+    recordedDates(state).forEach(function (date) {
+      var log = state.dailyLogs[date];
+      if (!log || !log.meals.length) return;
+
+      log.meals.slice().sort(function (a, b) {
+        return MEAL_ORDER.indexOf(a.type) - MEAL_ORDER.indexOf(b.type);
+      }).forEach(function (meal) {
+        var n = meal.nutrients || {};
+        var items = (meal.items || []).map(function (i) {
+          var f = FitLog.foods.get(i.food);
+          return (f ? f.name : i.food) + ' ' + i.g + 'g';
+        }).join(' + ');
+
+        rows.push([
+          date, dayName(date),
+          MEAL_LABEL[meal.type] || meal.type,
+          meal.label,
+          portionLabel(meal.portion),
+          meal.time || '',
+          Math.round(n.kcal || 0), round1(n.protein), round1(n.carbs),
+          round1(n.fat), round1(n.fiber), Math.round(n.sodium || 0),
+          items, meal.note || ''
+        ]);
+      });
+    });
+
+    return toCsv(rows);
+  }
+
+  /* ---------- 3. 인바디 기록 ---------- */
+
+  function bodyLog(state) {
+    var rows = [[
+      '날짜', '요일', '체중(kg)', '골격근량(kg)', '체지방률(%)', '체지방량(kg)',
+      '복부지방률', '허리둘레(cm)', '체중변화(kg)'
+    ]];
+
+    var logs = state.bodyLogs.slice().sort(function (a, b) {
+      return a.date < b.date ? -1 : 1;
+    });
+
+    logs.forEach(function (l, i) {
+      var fatMass = (l.bodyFatPct === null || l.bodyFatPct === undefined)
+        ? '' : round1(l.weight * l.bodyFatPct / 100);
+      var diff = i === 0 ? '' : round1(l.weight - logs[i - 1].weight);
+
+      rows.push([
+        l.date, dayName(l.date), l.weight,
+        l.skeletalMuscle === null ? '' : l.skeletalMuscle,
+        l.bodyFatPct === null ? '' : l.bodyFatPct,
+        fatMass,
+        l.visceralRatio === null ? '' : l.visceralRatio,
+        l.waistCm === null ? '' : l.waistCm,
+        diff
+      ]);
+    });
+
+    return toCsv(rows);
+  }
+
+  /* ---------- 다운로드 ---------- */
+
+  function download(fileName, text) {
+    // BOM 이 없으면 한글 엑셀에서 전부 깨져 보인다. 이게 이 함수의 핵심이다.
+    var blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  var SHEETS = [
+    { key: 'daily',  label: '일별 요약',   file: '일별요약',   build: dailySummary },
+    { key: 'meals',  label: '식사 상세',   file: '식사상세',   build: mealDetail },
+    { key: 'body',   label: '인바디 기록', file: '인바디기록', build: bodyLog }
+  ];
+
+  function exportSheet(key) {
+    var sheet = SHEETS.filter(function (s) { return s.key === key; })[0];
+    if (!sheet) return null;
+
+    var text = sheet.build(store.load());
+    download('fitlog-' + sheet.file + '-' + store.todayKey() + '.csv', text);
+    return text;
+  }
+
+  FitLog.csv = {
+    SHEETS: SHEETS,
+    cell: cell,
+    toCsv: toCsv,
+    dailySummary: dailySummary,
+    mealDetail: mealDetail,
+    bodyLog: bodyLog,
+    exportSheet: exportSheet
   };
 })(window.FitLog);
 
@@ -4625,7 +4976,7 @@ window.FitLog = window.FitLog || {};
 
     wrap.appendChild(workoutCard(day));
 
-    wrap.appendChild(alertsCard(state, eaten));
+    wrap.appendChild(alertsCard(state));
     wrap.appendChild(ui.disclaimer());
     return wrap;
   }
@@ -4816,45 +5167,71 @@ window.FitLog = window.FitLog || {};
     ]);
   }
 
-  /* 오늘의 알림 — 상한량 초과, 성분 중복, 배치 조언을 한 카드에 모은다 */
-  function alertsCard(state, eaten) {
+  /* 오늘의 알림 — 오늘 기준으로 '지금 알아야 할 것' 만 담는다.
+   *
+   * 원래는 주간 평균 부족분과 운동 독려 문구까지 넣었는데 걷어냈다. 사용자 피드백:
+   *   "일주일 평균 말고 오늘 양만 말해줘", "운동 독려는 빼줘. 필요한 정보만 받고 싶어."
+   * 그래서 여기는 오늘치 숫자 + 넘거나 모자란 것만 남기고,
+   * 보충제 배치 조언(칭찬·시간대 권고)은 정작 고칠 수 있는 설정 탭으로 옮겼다.
+   */
+  function alertsCard(state) {
     var judge = FitLog.judge;
-    var review = FitLog.supplements.review(state.supplements, eaten);
+    var report = judge.todayReport(state, store.todayKey());
+    var review = FitLog.supplements.review(state.supplements, null, state.targets.micros);
     var items = [];
 
-    // 운동·신체 판정이 영양보다 먼저다. 근손실 경고가 제일 중요하다.
+    // 1) 운동 — 남긴 두 가지는 모르면 손해 보는 사실이다
     judge.workoutJudgments(state).forEach(function (j) {
       items.push({ level: j.level, text: j.message });
     });
+
+    // 2) 신체 변화 — 경고만. 칭찬은 인바디 탭 '변화 판정' 에 있다
     judge.bodyJudgments(state).forEach(function (j) {
-      items.push({ level: j.level, text: j.message });
+      if (j.level === 'warn') items.push({ level: 'warn', text: j.message });
     });
 
-    // 주간 평균 기준 부족 영양소 상위 3개
-    var report = judge.nutritionReport(state, store.todayKey(), 7);
-    judge.priority(report).slice(0, 3).forEach(function (item) {
-      var short = Math.round((item.target - item.value) * 10) / 10;
+    // 3) 오늘 매크로 — 넘거나 모자란 것만
+    report.macros.forEach(function (m) {
+      if (m.level.key === 'ok') return;
+      var pct = Math.round(m.ratio * 100);
+      var over = m.level.key === 'over';
       items.push({
-        level: item.level.key === 'over' ? 'warn' : 'info',
-        text: item.level.key === 'over'
-          ? item.name + ' — 최근 일주일 평균이 ' + item.value + item.unit + '으로 많은 편이야.'
-          : item.name + ' — 최근 일주일 평균이 하루 ' + short + item.unit + '씩 모자라.'
+        level: over ? 'warn' : 'info',
+        text: m.name + ' — 오늘 ' + m.value + m.unit + ', 목표(' + m.target + m.unit + ')의 ' +
+          pct + '%' + (over ? '. 넘었어.'
+                            : '. ' + (Math.round((m.target - m.value) * 10) / 10) + m.unit + ' 모자라.')
       });
     });
 
-    review.ul.forEach(function (w) { items.push({ level: 'warn', text: w.message }); });
+    // 4) 오늘 미량영양소 — 부족·과다만. 총량과 함께 하루 필요량 대비를 항상 같이 말한다
+    report.items.forEach(function (item) {
+      if (item.level.key === 'over') items.push({ level: 'warn', text: judge.itemMessage(item) });
+    });
+    report.items.forEach(function (item) {
+      if (item.level.key === 'low') items.push({ level: 'info', text: judge.itemMessage(item) });
+    });
+
+    // 5) 보충제 성분 중복 — 합계가 하루 필요량의 몇 배인지까지
     review.duplicates.forEach(function (d) { items.push({ level: 'info', text: d.message }); });
-    review.interactions.forEach(function (i) { items.push({ level: i.level, text: i.message }); });
+
+    // 6) 백업 — 독려가 아니라 '기록이 통째로 사라질 수 있다' 는 사실이다.
+    //    오래됐을 때만 한 줄 띄운다.
+    if (backupNeeded()) {
+      var days = store.daysSinceBackup();
+      items.push({
+        level: 'warn',
+        text: (days === null ? '아직 백업한 적이 없어.' : '백업한 지 ' + days + '일 됐어.') +
+          ' 기록은 이 브라우저에만 있어서 지워지면 복구가 안 돼. 설정에서 백업 파일을 받아 둬.'
+      });
+    }
 
     if (!items.length) {
       return ui.card('오늘의 알림', [
-        el('p', { class: 'card-note', text: '지금은 특별히 알려줄 게 없어.' })
+        el('p', { class: 'card-note',
+          text: report.hasMeals ? '오늘은 넘치거나 모자란 게 없어.'
+                                : '식사를 기록하면 오늘 부족한 게 뭔지 알려줄게.' })
       ]);
     }
-
-    // 경고를 먼저, 칭찬을 나중에.
-    var order = { warn: 0, info: 1, tip: 2, good: 3 };
-    items.sort(function (a, b) { return order[a.level] - order[b.level]; });
 
     return ui.card('오늘의 알림', items.map(function (item) {
       return el('p', { class: 'alert alert-' + item.level, text: item.text });
@@ -5242,18 +5619,34 @@ window.FitLog = window.FitLog || {};
     /* 보충제 */
     wrap.appendChild(supplementManageCard(state));
 
-    /* 데이터 */
-    wrap.appendChild(ui.card('데이터', [
+    /* 데이터 — 용도가 다른 두 가지를 섞어 두면 친구들이 헷갈린다. 나눠서 설명한다. */
+    var csvButtons = FitLog.csv.SHEETS.map(function (sheet) {
+      var btn = el('button', { class: 'btn btn-block', type: 'button',
+                               text: sheet.label + ' 내보내기' });
+      btn.addEventListener('click', function () {
+        FitLog.csv.exportSheet(sheet.key);
+        ui.toast(sheet.label + ' 파일 저장했어.');
+      });
+      return btn;
+    });
+
+    wrap.appendChild(ui.card('엑셀로 보기 (CSV)', [
+      el('p', { class: 'card-note',
+        text: '엑셀·구글시트에서 바로 열려. 기록을 훑어보거나 트레이너에게 보낼 때 써.' }),
+      el('div', { class: 'btn-stack' }, csvButtons)
+    ]));
+
+    wrap.appendChild(ui.card('백업 (기기 변경용)', [
       el('div', { class: 'btn-stack' }, [
         el('button', {
-          class: 'btn btn-block', type: 'button', text: '데이터 내보내기 (JSON)',
+          class: 'btn btn-block', type: 'button', text: '백업 파일 내보내기',
           onclick: function () {
             FitLog.backup.exportData();
             ui.toast('백업 파일 저장했어.');
           }
         }),
         el('button', {
-          class: 'btn btn-block', type: 'button', text: '데이터 불러오기 (JSON)',
+          class: 'btn btn-block', type: 'button', text: '백업 파일 불러오기',
           onclick: openImport
         }),
         el('button', {
@@ -5261,8 +5654,11 @@ window.FitLog = window.FitLog || {};
           onclick: resetAll
         })
       ]),
+      backupStatusNote(),
       el('p', { class: 'card-note',
-        text: '데이터는 이 브라우저에만 저장돼. 기기 바꾸기 전에 꼭 내보내.' })
+        text: '폰을 바꾸거나 주소가 달라질 때 쓰는 파일이야. 열어볼 필요 없고, ' +
+              '새 기기에서 불러오기만 하면 기록이 그대로 옮겨져. ' +
+              '위의 CSV 는 보기용이라 되돌릴 수 없으니 이건 따로 챙겨둬.' })
     ]));
 
     /* 앱 정보 */
@@ -5270,6 +5666,8 @@ window.FitLog = window.FitLog || {};
       el('div', { class: 'rows' }, [
         ui.row('데이터 형식', 'v' + store.SCHEMA_VERSION),
         ui.row('빌드', FitLog.app.BUILD),
+        ui.row('영구 저장', FitLog.app.storageStatusText()),
+        ui.row('마지막 백업', backupAgeText()),
         ui.row('시작한 날', p.createdAt)
       ]),
       el('p', { class: 'card-note',
@@ -5405,6 +5803,41 @@ window.FitLog = window.FitLog || {};
 
   function signed(n) { return (n > 0 ? '+' : '') + n; }
 
+  /* 백업 노출도 — localStorage 는 영구 저장이 아니라서 이게 유일한 확실한 대비다 */
+  var BACKUP_STALE_DAYS = 14;
+
+  function backupAgeText() {
+    var days = store.daysSinceBackup();
+    if (days === null) return '한 번도 안 함';
+    if (days === 0) return '오늘';
+    return days + '일 전';
+  }
+
+  function backupNeeded() {
+    var days = store.daysSinceBackup();
+    var recorded = store.recordedDayCount();
+    if (recorded < 3) return false;                 // 잃을 게 별로 없으면 재촉하지 않는다
+    if (days === null) return true;
+    return days >= BACKUP_STALE_DAYS;
+  }
+
+  function backupStatusNote() {
+    var days = store.daysSinceBackup();
+
+    if (!backupNeeded()) {
+      return el('p', { class: 'card-note',
+        text: '마지막 백업: ' + backupAgeText() +
+              ' · 기록된 날: ' + store.recordedDayCount() + '일' });
+    }
+
+    return el('p', { class: 'alert alert-warn',
+      text: (days === null
+        ? '아직 백업한 적이 없어. '
+        : '백업한 지 ' + days + '일 됐어. ') +
+        '브라우저 기록을 지우거나 한동안 앱을 안 열면 기록이 사라질 수 있어. ' +
+        '지금 백업 파일을 받아서 파일 앱이나 메일에 저장해 둬.' });
+  }
+
   /* 보충제 등록·수정·삭제·일시중지 */
   function supplementManageCard(state) {
     var sup = FitLog.supplements;
@@ -5451,6 +5884,14 @@ window.FitLog = window.FitLog || {};
     });
     card.appendChild(openBtn);
     card.appendChild(formSlot);
+
+    /* 배치 조언 — 시간대를 고칠 수 있는 이 자리에 둔다 (오늘 탭에서는 뺐다) */
+    var advice = sup.interactions(state.supplements);
+    if (advice.length) {
+      advice.forEach(function (a) {
+        card.appendChild(el('p', { class: 'alert alert-' + a.level, text: a.message }));
+      });
+    }
 
     /* 등록된 목록 */
     if (!state.supplements.length) {
@@ -5707,959 +6148,6 @@ window.FitLog = window.FitLog || {};
 
 </script>
 <script>
-/* tests.js — 계산 로직 단위 검증
- *
- * 브라우저 콘솔에서 FitLog.runTests() 를 실행하거나,
- * 주소 끝에 ?test 를 붙여서 자동 실행할 수 있다.
- * Node 에서는 `node tests/run-tests.js` 로 같은 테스트를 돌린다.
- */
-
-window.FitLog = window.FitLog || {};
-
-(function (FitLog) {
-  'use strict';
-
-  var calc = FitLog.calc;
-  var nutrition = FitLog.nutrition;
-  var store = FitLog.store;
-
-  var results = [];
-
-  function ok(name, condition, detail) {
-    results.push({ name: name, pass: !!condition, detail: detail });
-  }
-
-  function near(name, actual, expected, tolerance) {
-    var tol = tolerance === undefined ? 0.5 : tolerance;
-    var pass = Math.abs(actual - expected) <= tol;
-    ok(name, pass, '기대 ' + expected + ' / 실제 ' + actual);
-  }
-
-  function eq(name, actual, expected) {
-    ok(name, actual === expected, '기대 ' + expected + ' / 실제 ' + actual);
-  }
-
-  function baseProfile(over) {
-    var p = {
-      height: 160, age: 50, sex: 'female', weight: 57.4,
-      skeletalMuscle: null, bodyFatPct: null,
-      goals: ['maintain'], weeklyPlan: { strength: 2, cardio: 3 }
-    };
-    Object.keys(over || {}).forEach(function (k) { p[k] = over[k]; });
-    return p;
-  }
-
-  function runTests() {
-    results = [];
-
-    /* ---- BMR ---- */
-    // Mifflin-St Jeor 여성: 10×57.4 + 6.25×160 − 5×50 − 161 = 1163
-    near('BMR Mifflin(여성)', calc.bmr(baseProfile()), 1163);
-    // 남성: … + 5 = 1329
-    near('BMR Mifflin(남성)', calc.bmr(baseProfile({ sex: 'male' })), 1329);
-    // Katch-McArdle: LBM = 57.4×0.685 = 39.319 → 370 + 21.6×39.319 = 1219.29
-    near('BMR Katch-McArdle(체지방률 입력 시)',
-      calc.bmr(baseProfile({ bodyFatPct: 31.5 })), 1219.29, 0.05);
-    ok('체지방률이 있으면 Katch-McArdle 을 쓴다',
-      calc.bmr(baseProfile({ bodyFatPct: 31.5 })) !== calc.bmr(baseProfile()));
-
-    /* ---- 활동계수 ---- */
-    eq('활동계수 0회', calc.activityFactor({ strength: 0, cardio: 0 }), 1.20);
-    eq('활동계수 1회', calc.activityFactor({ strength: 1, cardio: 0 }), 1.20);
-    eq('활동계수 2회', calc.activityFactor({ strength: 1, cardio: 1 }), 1.375);
-    eq('활동계수 3회', calc.activityFactor({ strength: 2, cardio: 1 }), 1.375);
-    eq('활동계수 4회', calc.activityFactor({ strength: 2, cardio: 2 }), 1.45);
-    eq('활동계수 5회', calc.activityFactor({ strength: 2, cardio: 3 }), 1.45);
-    eq('활동계수 6회', calc.activityFactor({ strength: 3, cardio: 3 }), 1.55);
-    eq('활동계수 10회', calc.activityFactor({ strength: 5, cardio: 5 }), 1.55);
-
-    /* ---- TDEE ---- */
-    near('TDEE = BMR × 활동계수',
-      calc.tdee(baseProfile()), 1163 * 1.45, 1);
-
-    /* ---- 목표치: 감량 (안전장치 미작동 케이스) ---- */
-    var lose = calc.computeTargets(baseProfile({ goals: ['loseFat'], bodyFatPct: 31.5 }));
-    // BMR 1219.29 × 1.45 = 1767.97 → −300 = 1467.97 → 하한 1280.26 보다 크므로 그대로
-    eq('감량 칼로리 = TDEE − 300', lose.calories, 1468);
-    eq('감량 단백질 = 체중 × 2.0', lose.protein, 115);
-    eq('지방 = 칼로리 × 0.25 / 9', lose.fat, 41);
-    eq('탄수 = (칼로리 − 단백질×4 − 지방×9) / 4', lose.carbs, 160);
-    eq('식이섬유 = 칼로리/1000 × 14', lose.fiber, 21);
-    eq('안전장치 안내 없음', lose.notes.length, 0);
-
-    /* ---- 목표치: 유지 / 근력 ---- */
-    var maintain = calc.computeTargets(baseProfile({ bodyFatPct: 31.5 }));
-    eq('유지 칼로리 = TDEE', maintain.calories, 1768);
-    eq('유지 단백질 = 체중 × 1.4', maintain.protein, 80);
-
-    var gain = calc.computeTargets(baseProfile({ goals: ['gainStrength'], bodyFatPct: 31.5 }));
-    eq('근력 칼로리 = TDEE + 100', gain.calories, 1868);
-    eq('근력 단백질 = 체중 × 1.8', gain.protein, 103);
-
-    /* ---- 목표 복수 선택: 근력 + 감량 = 리컴프 ---- */
-    var recomp = calc.computeTargets(
-      baseProfile({ goals: ['gainStrength', 'loseFat'], bodyFatPct: 31.5 }));
-    eq('리컴프 칼로리 = TDEE − 200', recomp.calories, 1568);
-    eq('리컴프 단백질 = 체중 × 2.2', recomp.protein, 126);
-    eq('리컴프 지방', recomp.fat, 44);
-    eq('리컴프 탄수', recomp.carbs, 167);
-    eq('리컴프 라벨', recomp.meta.goalLabel, '근력 강화 + 체중 감량');
-    eq('리컴프 목표 키', recomp.meta.goalKey, 'gainStrength+loseFat');
-    ok('리컴프는 이유를 설명하는 안내가 붙는다',
-      recomp.notes.length === 1 && recomp.notes[0].indexOf('리컴프') === -1 &&
-      recomp.notes[0].indexOf('근육은 지키는') >= 0, recomp.notes[0]);
-    ok('리컴프 칼로리는 감량 단독보다 높고 근력 단독보다 낮다',
-      recomp.calories > lose.calories && recomp.calories < gain.calories,
-      lose.calories + ' < ' + recomp.calories + ' < ' + gain.calories);
-    ok('리컴프 단백질이 가장 높다',
-      recomp.protein > lose.protein && recomp.protein > gain.protein);
-    eq('선택 순서가 달라도 같은 결과',
-      calc.computeTargets(baseProfile({ goals: ['loseFat', 'gainStrength'], bodyFatPct: 31.5 })).calories,
-      recomp.calories);
-
-    /* ---- 목표 정규화 ---- */
-    eq('빈 목표는 유지로', calc.normalizeGoals([]).join('+'), 'maintain');
-    eq('옛 단일 문자열도 받는다', calc.normalizeGoals('loseFat').join('+'), 'loseFat');
-    eq('중복 제거', calc.normalizeGoals(['loseFat', 'loseFat']).join('+'), 'loseFat');
-    eq('모르는 값은 버린다', calc.normalizeGoals(['loseFat', '헛소리']).join('+'), 'loseFat');
-    eq('유지는 다른 목표와 같이 못 간다',
-      calc.normalizeGoals(['maintain', 'loseFat']).join('+'), 'loseFat');
-    eq('정렬 순서는 항상 같다',
-      calc.normalizeGoals(['loseFat', 'gainStrength']).join('+'), 'gainStrength+loseFat');
-
-    /* ---- 목표 칩 토글 ---- */
-    eq('칩을 누르면 추가된다',
-      calc.toggleGoal(['gainStrength'], 'loseFat').join('+'), 'gainStrength+loseFat');
-    eq('다시 누르면 빠진다',
-      calc.toggleGoal(['gainStrength', 'loseFat'], 'loseFat').join('+'), 'gainStrength');
-    eq('마지막 하나는 해제되지 않는다',
-      calc.toggleGoal(['loseFat'], 'loseFat').join('+'), 'loseFat');
-    eq('유지를 고르면 나머지가 빠진다',
-      calc.toggleGoal(['gainStrength', 'loseFat'], 'maintain').join('+'), 'maintain');
-    eq('유지 상태에서 다른 걸 고르면 유지가 빠진다',
-      calc.toggleGoal(['maintain'], 'loseFat').join('+'), 'loseFat');
-
-    /* ---- 안전장치: 칼로리 하한 ---- */
-    // 운동 0회 → 활동계수 1.20. BMR 1163 × 1.20 = 1395.6 → −300 = 1095.6
-    // 하한 1163 × 1.05 = 1221.15 보다 낮으므로 상향돼야 한다.
-    var floored = calc.computeTargets(
-      baseProfile({ goals: ['loseFat'], weeklyPlan: { strength: 0, cardio: 0 } }));
-    eq('칼로리가 BMR×1.05 로 상향된다', floored.calories, 1221);
-    ok('상향 시 사용자 안내 문구가 생긴다', floored.notes.length === 1, floored.notes[0]);
-
-    /* ---- 안전장치: 단백질 상한 ---- */
-    [['gainStrength'], ['loseFat'], ['maintain'], ['gainStrength', 'loseFat']].forEach(function (goal) {
-      var t = calc.computeTargets(baseProfile({ goals: goal }));
-      ok('단백질이 체중×2.5g 를 넘지 않는다 (' + goal.join('+') + ')',
-        t.protein <= 57.4 * calc.PROTEIN_CAP_PER_KG,
-        t.protein + ' ≤ ' + (57.4 * calc.PROTEIN_CAP_PER_KG));
-    });
-
-    /* ---- 식이섬유 최소값 ---- */
-    var small = calc.computeTargets(
-      baseProfile({ weight: 40, height: 150, age: 70, goals: ['loseFat'],
-                    weeklyPlan: { strength: 0, cardio: 0 } }));
-    ok('식이섬유는 최소 20g', small.fiber >= 20, String(small.fiber));
-
-    /* ---- 미량영양소 기준 ---- */
-    var f50 = nutrition.microTargets({ sex: 'female', age: 50 });
-    eq('50대 여성 칼슘 800mg', f50.calcium, 800);
-    eq('50대 여성 철 8mg', f50.iron, 8);
-    eq('50대 여성 마그네슘 280mg', f50.magnesium, 280);
-    eq('50대 여성 비타민D 10µg', f50.vitaminD, 10);
-
-    eq('완경 전이면 철 14mg',
-      nutrition.microTargets({ sex: 'female', age: 50, menopause: false }).iron, 14);
-    eq('완경 후면 철 8mg',
-      nutrition.microTargets({ sex: 'female', age: 50, menopause: true }).iron, 8);
-
-    var m30 = nutrition.microTargets({ sex: 'male', age: 35 });
-    eq('30대 남성 마그네슘 370mg', m30.magnesium, 370);
-    eq('30대 남성 아연 10mg', m30.zinc, 10);
-
-    eq('연령대 구분 19-29', nutrition.ageGroup(25), '19-29');
-    eq('연령대 구분 30-49', nutrition.ageGroup(49), '30-49');
-    eq('연령대 구분 50-64', nutrition.ageGroup(50), '50-64');
-    eq('연령대 구분 65+', nutrition.ageGroup(70), '65+');
-
-    ok('성별 × 연령대 조합 8개가 모두 정의돼 있다',
-      ['female', 'male'].every(function (s) {
-        return ['19-29', '30-49', '50-64', '65+'].every(function (g) {
-          return nutrition.RECOMMENDED[s] && nutrition.RECOMMENDED[s][g];
-        });
-      }));
-
-    ok('모든 영양소 키가 권장량 테이블에 있다',
-      nutrition.NUTRIENTS.every(function (n) {
-        return nutrition.RECOMMENDED.female['50-64'][n.key] !== undefined;
-      }));
-
-    eq('마그네슘 UL 은 보충제 유래분에만 적용',
-      nutrition.NUTRIENT_MAP.magnesium.ulSource, 'supplement');
-    eq('비타민E UL 은 보충제 유래분에만 적용',
-      nutrition.NUTRIENT_MAP.vitaminE.ulSource, 'supplement');
-    eq('엽산 UL 은 보충제 유래분에만 적용',
-      nutrition.NUTRIENT_MAP.folate.ulSource, 'supplement');
-    eq('칼슘 UL 은 전체 섭취에 적용',
-      nutrition.NUTRIENT_MAP.calcium.ulSource, 'all');
-
-    /* ---- 목표치에 미량영양소가 포함된다 ---- */
-    ok('targets.micros 가 채워진다', lose.micros && lose.micros.calcium === 800);
-
-    /* ---- 입력 검증 ---- */
-    ok('정상 프로필은 에러 없음',
-      Object.keys(calc.validateProfile(baseProfile())).length === 0);
-    ok('키 범위 밖은 에러', !!calc.validateProfile(baseProfile({ height: 40 })).height);
-    ok('나이 범위 밖은 에러', !!calc.validateProfile(baseProfile({ age: 5 })).age);
-    ok('성별 미선택은 에러', !!calc.validateProfile(baseProfile({ sex: '' })).sex);
-    ok('체중 범위 밖은 에러', !!calc.validateProfile(baseProfile({ weight: 0 })).weight);
-    ok('체지방률 범위 밖은 에러',
-      !!calc.validateProfile(baseProfile({ bodyFatPct: 90 })).bodyFatPct);
-    ok('골격근량이 체중보다 크면 에러',
-      !!calc.validateProfile(baseProfile({ skeletalMuscle: 60 })).skeletalMuscle);
-    ok('선택 항목 미입력은 에러 아님',
-      !calc.validateProfile(baseProfile({ bodyFatPct: '', skeletalMuscle: '' })).bodyFatPct);
-    ok('목표 미선택은 에러', !!calc.validateProfile(baseProfile({ goals: [] })).goals);
-    ok('모르는 목표만 있으면 에러',
-      !!calc.validateProfile(baseProfile({ goals: ['헛소리'] })).goals);
-
-    /* ---- 저장소 마이그레이션 ---- */
-    var fresh = store.migrate(null);
-    eq('빈 데이터는 현재 스키마로 초기화', fresh.schemaVersion, store.SCHEMA_VERSION);
-    ok('빈 데이터의 기본 구조',
-      fresh.profile === null && Array.isArray(fresh.supplements) &&
-      Array.isArray(fresh.bodyLogs) && typeof fresh.dailyLogs === 'object');
-
-    var messy = store.migrate({
-      schemaVersion: 1,
-      profile: { height: 160 },
-      supplements: null,
-      dailyLogs: { '2026-08-24': { meals: null, waterMl: '1500' } },
-      junk: '버려야 함'
-    });
-    ok('배열이 아닌 supplements 는 빈 배열로 정규화', Array.isArray(messy.supplements));
-    ok('알 수 없는 필드는 버린다', messy.junk === undefined);
-    ok('일일 로그의 누락 필드가 채워진다',
-      Array.isArray(messy.dailyLogs['2026-08-24'].meals) &&
-      messy.dailyLogs['2026-08-24'].waterMl === 1500 &&
-      Array.isArray(messy.dailyLogs['2026-08-24'].workouts));
-
-    // alcohol 은 나중에 추가된 필드라 없는 날이 섞여 있을 수 있다.
-    var noAlcohol = store.migrate({
-      schemaVersion: 1,
-      dailyLogs: { '2026-08-20': { meals: [] } }
-    }).dailyLogs['2026-08-20'].alcohol;
-    ok('음주 필드가 없으면 기본값으로 채워진다',
-      noAlcohol.drank === false && noAlcohol.kcal === 0 && noAlcohol.note === '',
-      JSON.stringify(noAlcohol));
-
-    var withAlcohol = store.migrate({
-      schemaVersion: 1,
-      dailyLogs: { '2026-08-21': { alcohol: { drank: true, kcal: '350', note: '맥주 2캔' } } }
-    }).dailyLogs['2026-08-21'].alcohol;
-    ok('음주 기록이 있으면 값을 보존한다',
-      withAlcohol.drank === true && withAlcohol.kcal === 350 && withAlcohol.note === '맥주 2캔',
-      JSON.stringify(withAlcohol));
-
-    ok('빈 하루 로그에도 음주 필드가 있다',
-      store.emptyDay().alcohol !== undefined);
-
-    var future = store.migrate({ schemaVersion: 99, profile: { height: 170 } });
-    eq('미래 버전 데이터는 건드리지 않는다', future.schemaVersion, 99);
-
-    // v1 → v2: 단일 goal 이 복수 goals 로 승격된다.
-    var upgraded = store.migrate({
-      schemaVersion: 1,
-      profile: { height: 160, age: 50, sex: 'female', weight: 57.4, goal: 'loseFat' }
-    });
-    eq('v1 데이터는 v2 로 올라간다', upgraded.schemaVersion, 2);
-    ok('옛 goal 이 goals 배열이 된다',
-      Array.isArray(upgraded.profile.goals) && upgraded.profile.goals.join('+') === 'loseFat',
-      JSON.stringify(upgraded.profile.goals));
-    ok('옛 goal 필드는 제거된다', upgraded.profile.goal === undefined);
-
-    var noGoal = store.migrate({ schemaVersion: 1, profile: { height: 160 } });
-    eq('목표가 없던 v1 데이터는 유지로', noGoal.profile.goals.join('+'), 'maintain');
-
-    ok('이미 v2 인 데이터는 goals 를 그대로 둔다',
-      store.migrate({
-        schemaVersion: 2,
-        profile: { goals: ['gainStrength', 'loseFat'] }
-      }).profile.goals.join('+') === 'gainStrength+loseFat');
-
-    /* ---- 백업 파일 검증 ---- */
-    if (FitLog.backup) {
-      ok('정상 백업은 통과', FitLog.backup.validateBackup({ schemaVersion: 1 }).ok);
-      ok('형식 정보 없는 파일은 거부', !FitLog.backup.validateBackup({ hello: 1 }).ok);
-      ok('배열은 거부', !FitLog.backup.validateBackup([1, 2]).ok);
-      ok('미래 스키마는 거부', !FitLog.backup.validateBackup({ schemaVersion: 99 }).ok);
-    }
-
-    /* ---- 음식 DB ---- */
-    var foods = FitLog.foods;
-    var list = foods.all();
-
-    eq('음식 DB 총 312개', list.length, 312);
-
-    var EXPECTED_COUNT = {
-      grain: 40, meat: 35, seafood: 35, vegetable: 50, fruit: 30,
-      dairy: 25, legume_nut: 25, seasoning: 25, dish: 47
-    };
-    Object.keys(EXPECTED_COUNT).forEach(function (g) {
-      var n = list.filter(function (f) { return f.group === g; }).length;
-      eq('그룹 ' + g + ' 개수', n, EXPECTED_COUNT[g]);
-    });
-
-    var ids = {}, dupIds = [];
-    var names = {}, dupNames = [];
-    list.forEach(function (f) {
-      if (ids[f.id]) dupIds.push(f.id); else ids[f.id] = true;
-      if (names[f.name]) dupNames.push(f.name); else names[f.name] = true;
-    });
-    ok('id 중복 없음', dupIds.length === 0, dupIds.join(', '));
-    ok('이름 중복 없음', dupNames.length === 0, dupNames.join(', '));
-
-    var missingKeys = list.filter(function (f) {
-      return foods.KEYS.some(function (k) { return typeof f.per100g[k] !== 'number'; });
-    });
-    ok('모든 항목이 영양소 19종을 숫자로 갖는다', missingKeys.length === 0,
-      missingKeys.slice(0, 3).map(function (f) { return f.name; }).join(', '));
-
-    var negative = list.filter(function (f) {
-      return foods.KEYS.some(function (k) { return f.per100g[k] < 0; });
-    });
-    ok('음수 값 없음', negative.length === 0,
-      negative.slice(0, 3).map(function (f) { return f.name; }).join(', '));
-
-    var fiberOver = list.filter(function (f) { return f.per100g.fiber > f.per100g.carbs; });
-    ok('식이섬유가 탄수화물을 넘지 않는다', fiberOver.length === 0,
-      fiberOver.slice(0, 3).map(function (f) { return f.name; }).join(', '));
-
-    // 칼로리 정합성: kcal ≈ 단백질×4 + 순탄수×4 + 지방×9 (식이섬유는 순탄수에서 뺀다)
-    var badKcal = [];
-    list.forEach(function (f) {
-      var p = f.per100g;
-      var atwater = p.protein * 4 + Math.max(0, p.carbs - p.fiber) * 4 + p.fat * 9;
-      var diff = Math.abs(atwater - p.kcal);
-      var allowed = Math.max(25, p.kcal * 0.2);
-      if (diff > allowed) {
-        badKcal.push(f.name + '(표기 ' + p.kcal + ' / 계산 ' + Math.round(atwater) + ')');
-      }
-    });
-    ok('칼로리가 매크로 합과 맞는다', badKcal.length === 0,
-      badKcal.slice(0, 5).join(', ') + (badKcal.length > 5 ? ' 외 ' + (badKcal.length - 5) + '건' : ''));
-
-    /* ---- 음식 조회·계산 헬퍼 ---- */
-    var rice = foods.get('rice_cooked');
-    ok('id 로 음식을 찾는다', rice && rice.name === '밥 (백미)');
-    ok('없는 id 는 null', foods.get('없는거') === null);
-
-    var scaled = foods.scale('rice_cooked', 210);
-    near('210g 밥의 칼로리 = 100g값 × 2.1', scaled.kcal, 130 * 2.1, 0.01);
-    near('210g 밥의 단백질', scaled.protein, 2.4 * 2.1, 0.01);
-    eq('0g 은 0kcal', foods.scale('rice_cooked', 0).kcal, 0);
-    ok('없는 음식 scale 은 null', foods.scale('없는거', 100) === null);
-
-    var combo = foods.sum([
-      foods.scale('rice_cooked', 210),
-      foods.scale('kimchi_jjigae', 350)
-    ]);
-    near('밥 210g + 김치찌개 350g 칼로리', combo.kcal, 130 * 2.1 + 65 * 3.5, 0.5);
-    near('합산 나트륨', combo.sodium, 1 * 2.1 + 520 * 3.5, 0.5);
-    ok('빈 목록의 합은 0', foods.sum([]).kcal === 0);
-    ok('null 이 섞여도 무시한다', foods.sum([null, foods.scale('rice_cooked', 100)]).kcal === 130);
-
-    var rounded = foods.round(combo);
-    ok('칼로리는 정수로 반올림', rounded.kcal === Math.round(combo.kcal));
-    ok('나머지는 소수 1자리', String(rounded.protein).split('.').length < 2 ||
-      String(rounded.protein).split('.')[1].length <= 1);
-
-    var hits = foods.search('김치');
-    ok('이름으로 검색된다', hits.length >= 2, hits.map(function (f) { return f.name; }).join(', '));
-    ok('검색 결과에 배추김치가 있다',
-      hits.some(function (f) { return f.id === 'kimchi'; }));
-    eq('빈 검색어는 빈 결과', foods.search('').length, 0);
-    ok('검색 개수 제한이 먹는다', foods.search('김', 2).length <= 2);
-    // 정렬 1순위: 이름 앞쪽에서 걸린 것 ('김치'로 검색하면 배추김치보다 김치찌개가 먼저)
-    eq('앞에서 걸린 이름이 먼저 나온다', foods.search('김치')[0].name, '김치찌개');
-    // 정렬 2순위: 걸린 위치가 같으면 짧은 이름 ('계란'은 전부 앞에서 걸리므로 계란찜이 먼저)
-    eq('걸린 위치가 같으면 짧은 이름이 먼저', foods.search('계란')[0].name, '계란찜');
-
-    ok('음식 DB 키가 KDRI 영양소를 모두 포함한다',
-      FitLog.nutrition.NUTRIENTS.every(function (n) {
-        return foods.KEYS.indexOf(n.key) >= 0;
-      }));
-
-    /* ---- 식사 템플릿 ---- */
-    var tpl = FitLog.templates;
-    var tplList = tpl.all();
-
-    eq('템플릿 총 129개', tplList.length, 129);
-
-    var EXPECTED_TPL = {
-      korean: 45, banchan: 15, western: 25, eatingout: 34, snack: 10
-    };
-    Object.keys(EXPECTED_TPL).forEach(function (c) {
-      eq('템플릿 ' + c + ' 개수', tpl.byCategory(c).length, EXPECTED_TPL[c]);
-    });
-
-    var tplIds = {}, tplDupId = [], tplNames = {}, tplDupName = [];
-    tplList.forEach(function (t) {
-      if (tplIds[t.id]) tplDupId.push(t.id); else tplIds[t.id] = true;
-      if (tplNames[t.name]) tplDupName.push(t.name); else tplNames[t.name] = true;
-    });
-    ok('템플릿 id 중복 없음', tplDupId.length === 0, tplDupId.join(', '));
-    ok('템플릿 이름 중복 없음', tplDupName.length === 0, tplDupName.join(', '));
-
-    // 가장 중요한 검사: 템플릿이 실재하지 않는 재료를 가리키면 영양소가 조용히 0이 된다.
-    var ghost = [];
-    tplList.forEach(function (t) {
-      t.items.forEach(function (item) {
-        if (!foods.get(item.food)) ghost.push(t.name + ' → ' + item.food);
-      });
-    });
-    ok('모든 재료가 실재하는 음식이다', ghost.length === 0,
-      ghost.slice(0, 5).join(', ') + (ghost.length > 5 ? ' 외 ' + (ghost.length - 5) + '건' : ''));
-
-    var badGram = tplList.filter(function (t) {
-      return !t.items.length || t.items.some(function (i) { return !(i.g > 0); });
-    });
-    ok('모든 재료의 g이 0보다 크다', badGram.length === 0,
-      badGram.slice(0, 3).map(function (t) { return t.name; }).join(', '));
-
-    var zeroKcal = tplList.filter(function (t) { return tpl.nutrients(t, 1).kcal <= 0; });
-    ok('칼로리가 0인 템플릿은 없다', zeroKcal.length === 0,
-      zeroKcal.slice(0, 3).map(function (t) { return t.name; }).join(', '));
-
-    /* 템플릿 영양소 = 재료 합 */
-    var kjr = tpl.nutrients('kimchi_jjigae_rice', 1);
-    var manual = foods.sum([foods.scale('rice_cooked', 210), foods.scale('kimchi_jjigae', 350)]);
-    near('김치찌개+공기밥 칼로리가 재료 합과 같다', kjr.kcal, manual.kcal, 0.01);
-    near('단백질도 재료 합과 같다', kjr.protein, manual.protein, 0.01);
-    eq('반올림하면 501kcal', foods.round(kjr).kcal, 501);
-
-    /* 양 조절 */
-    eq('양 조절 선택지는 3개', tpl.PORTIONS.length, 3);
-    eq('보통은 1.0 배', tpl.PORTIONS[1].value, 1.0);
-    near('적게(0.7)는 비례해서 줄어든다',
-      tpl.nutrients('kimchi_jjigae_rice', 0.7).kcal, kjr.kcal * 0.7, 0.01);
-    near('많이(1.4)는 비례해서 늘어난다',
-      tpl.nutrients('kimchi_jjigae_rice', 1.4).kcal, kjr.kcal * 1.4, 0.01);
-    ok('없는 템플릿은 null', tpl.nutrients('없는거', 1) === null);
-
-    var labels = tpl.itemLabels('kimchi_jjigae_rice', 1);
-    eq('재료 표시가 이름+g 형태', labels[0], '밥 (백미) 210g');
-    eq('양을 줄이면 재료 g도 줄어든다',
-      tpl.itemLabels('kimchi_jjigae_rice', 0.7)[0], '밥 (백미) 147g');
-
-    ok('템플릿 검색', tpl.search('파스타').length >= 4,
-      tpl.search('파스타').map(function (t) { return t.name; }).join(', '));
-    eq('빈 검색어는 빈 결과', tpl.search('').length, 0);
-
-    /* ---- 식사 기록 (저장 계층) ----
-       사용자의 실제 데이터를 건드리지 않도록 스냅샷을 떠 두고 끝나면 되돌린다. */
-    var snapshot = JSON.parse(JSON.stringify(store.load()));
-
-    store.reset();
-    var dateKey = '2026-08-24';
-
-    var m1 = store.addMeal(dateKey, {
-      type: 'lunch', sourceKind: 'template', sourceId: 'kimchi_jjigae_rice',
-      label: '김치찌개 + 공기밥', portion: 1,
-      nutrients: foods.round(tpl.nutrients('kimchi_jjigae_rice', 1))
-    });
-
-    ok('끼니에 id 가 붙는다', !!m1.id && m1.id.indexOf('meal_') === 0, m1.id);
-    eq('기록이 저장된다', store.getDay(dateKey).meals.length, 1);
-    eq('하루 합계 칼로리', Math.round(store.dayNutrients(dateKey).kcal), 501);
-
-    store.addMeal(dateKey, {
-      type: 'dinner', sourceKind: 'template', sourceId: 'samgyeopsal_set',
-      label: '삼겹살 + 밥 + 쌈', portion: 1,
-      nutrients: foods.round(tpl.nutrients('samgyeopsal_set', 1))
-    });
-    eq('두 끼니가 쌓인다', store.getDay(dateKey).meals.length, 2);
-
-    var twoMeals = Math.round(store.dayNutrients(dateKey).kcal);
-    var expectTwo = Math.round(foods.round(tpl.nutrients('kimchi_jjigae_rice', 1)).kcal +
-                               foods.round(tpl.nutrients('samgyeopsal_set', 1)).kcal);
-    eq('합계가 두 끼니의 합', twoMeals, expectTwo);
-
-    store.removeMeal(dateKey, m1.id);
-    eq('끼니를 지우면 하나 남는다', store.getDay(dateKey).meals.length, 1);
-    ok('지운 끼니는 합계에서 빠진다',
-      Math.round(store.dayNutrients(dateKey).kcal) === expectTwo - 501,
-      String(Math.round(store.dayNutrients(dateKey).kcal)));
-
-    eq('기록 없는 날은 합계 0', Math.round(store.dayNutrients('2020-01-01').kcal), 0);
-
-    /* 즐겨찾기 */
-    ok('처음엔 즐겨찾기가 아니다', !store.isFavorite('template', 'kimchi_jjigae_rice'));
-    ok('켜면 즐겨찾기가 된다', store.toggleFavorite('template', 'kimchi_jjigae_rice') === true);
-    ok('상태가 저장된다', store.isFavorite('template', 'kimchi_jjigae_rice'));
-    ok('다시 누르면 꺼진다', store.toggleFavorite('template', 'kimchi_jjigae_rice') === false);
-    ok('꺼진 게 반영된다', !store.isFavorite('template', 'kimchi_jjigae_rice'));
-    ok('종류가 다르면 별개로 관리된다',
-      (store.toggleFavorite('food', 'kimchi_jjigae_rice'),
-       store.isFavorite('food', 'kimchi_jjigae_rice') &&
-       !store.isFavorite('template', 'kimchi_jjigae_rice')));
-
-    /* 직접 등록 */
-    var custom = store.addCustomFood({
-      name: '회사 샐러드',
-      nutrients: { kcal: 320, protein: 22, carbs: 18, fat: 17 }
-    });
-    ok('직접 등록한 음식에 id 가 붙는다', custom.id.indexOf('custom_') === 0, custom.id);
-    eq('목록에 들어간다', store.load().customFoods.length, 1);
-    ok('id 로 찾을 수 있다', store.getCustomFood(custom.id).name === '회사 샐러드');
-
-    var customBig = foods.scaleNutrients(custom.nutrients, 1.4);
-    near('직접 등록한 음식도 양 조절이 된다', customBig.kcal, 320 * 1.4, 0.01);
-
-    store.toggleFavorite('custom', custom.id);
-    store.removeCustomFood(custom.id);
-    eq('삭제하면 목록에서 빠진다', store.load().customFoods.length, 0);
-    ok('삭제하면 즐겨찾기에서도 빠진다', !store.isFavorite('custom', custom.id));
-
-    // 사용자 데이터 원복
-    store.replace(snapshot);
-
-    /* ---- 보충제 ---- */
-    var sup = FitLog.supplements;
-
-    eq('프리셋 36종', sup.PRESETS.length, 36);
-    eq('시간대 6종', sup.TIME_SLOTS.length, 6);
-
-    ok('모든 프리셋이 실재하는 묶음에 속한다',
-      sup.PRESETS.every(function (p) {
-        return sup.PRESET_GROUPS.some(function (g) { return g.key === p.group; });
-      }),
-      sup.PRESETS.filter(function (p) {
-        return !sup.PRESET_GROUPS.some(function (g) { return g.key === p.group; });
-      }).map(function (p) { return p.name; }).join(', '));
-
-    ok('묶음마다 항목이 하나 이상 있다',
-      sup.PRESET_GROUPS.every(function (g) {
-        return sup.PRESETS.some(function (p) { return p.group === g.key; });
-      }));
-
-    /* 직접 등록 — 프리셋에 없는 걸 넣을 수 있어야 한다 */
-    eq('고를 수 있는 성분은 KDRI 14종 + 단백질·칼로리', sup.nutrientFields().length, 16);
-    ok('성분 목록에 단백질·칼로리가 있다',
-      sup.nutrientFields().some(function (f) { return f.key === 'protein'; }) &&
-      sup.nutrientFields().some(function (f) { return f.key === 'kcal'; }));
-    eq('성분 이름·단위를 찾을 수 있다', sup.fieldMeta('vitaminD').label, '비타민 D');
-    eq('모르는 키는 키 자체를 이름으로', sup.fieldMeta('없는거').label, '없는거');
-
-    var handmade = { id: 'h1', name: '동네약국 비타민', presetId: null,
-                     timeSlot: 'morning', dailyDoses: 1,
-                     nutrients: { vitaminC: 500 }, enabled: true };
-    eq('직접 등록한 것도 합계에 들어간다',
-      sup.dailyNutrients([handmade]).vitaminC, 500);
-    ok('직접 등록한 것도 중복 판정 대상',
-      sup.duplicates([handmade, mk('vitamin_c')]).some(function (d) { return d.key === 'vitaminC'; }));
-    eq('프리셋이 아니면 태그가 없다', sup.tagsOf(handmade).length, 0);
-    ok('태그가 없어도 룰 엔진이 죽지 않는다',
-      Array.isArray(sup.interactions([handmade, mk('iron', { timeSlot: 'morning' })])));
-
-    var supDupId = {}, supDup = [];
-    sup.PRESETS.forEach(function (p) {
-      if (supDupId[p.id]) supDup.push(p.id); else supDupId[p.id] = true;
-    });
-    ok('프리셋 id 중복 없음', supDup.length === 0, supDup.join(', '));
-
-    ok('모든 프리셋의 기본 시간대가 실재한다',
-      sup.PRESETS.every(function (p) { return !!sup.SLOT_BY_KEY[p.slot]; }));
-
-    var badKey = [];
-    sup.PRESETS.forEach(function (p) {
-      Object.keys(p.nutrients).forEach(function (k) {
-        if (foods.KEYS.indexOf(k) < 0) badKey.push(p.name + ' → ' + k);
-      });
-    });
-    ok('프리셋 영양소 키가 음식 DB 키와 같다', badKey.length === 0, badKey.join(', '));
-
-    ok('마그네슘 프리셋에 원소 함량 주의 문구가 있다',
-      (sup.getPreset('magnesium').note || '').indexOf('원소') >= 0);
-
-    /* 검수 기준: 종합비타민 + 비타민D 를 같이 등록하면 D 중복이 잡힌다 */
-    function mk(presetId, over) {
-      var p = sup.getPreset(presetId);
-      var n = {};
-      Object.keys(p.nutrients).forEach(function (k) { n[k] = p.nutrients[k]; });
-      var item = { id: 'x_' + presetId, name: p.name, presetId: p.id,
-                   timeSlot: p.slot, dailyDoses: p.doses, nutrients: n, enabled: true };
-      Object.keys(over || {}).forEach(function (k) { item[k] = over[k]; });
-      return item;
-    }
-
-    var dTogether = sup.duplicates([mk('multivitamin'), mk('vitamin_d')]);
-    var dHit = dTogether.filter(function (d) { return d.key === 'vitaminD'; })[0];
-    ok('종합비타민 + 비타민D → 비타민 D 중복이 잡힌다', !!dHit,
-      dTogether.map(function (d) { return d.name; }).join(', '));
-    eq('중복 합계는 10 + 25 = 35µg', dHit && dHit.total, 35);
-    ok('중복 안내에 두 제품 이름이 들어간다',
-      dHit && dHit.sources.length === 2 &&
-      dHit.message.indexOf('종합비타민') >= 0 && dHit.message.indexOf('비타민 D') >= 0,
-      dHit && dHit.message);
-    ok('종합비타민은 칼슘·철·아연 중복도 같이 잡는다',
-      sup.duplicates([mk('multivitamin'), mk('calcium'), mk('iron'), mk('zinc')]).length >= 3);
-    eq('하나만 있으면 중복 아님', sup.duplicates([mk('vitamin_d')]).length, 0);
-    eq('중지된 건 세지 않는다',
-      sup.duplicates([mk('multivitamin'), mk('vitamin_d', { enabled: false })]).length, 0);
-
-    /* 하루 합계 */
-    var dn = sup.dailyNutrients([mk('vitamin_d'), mk('vitamin_c')]);
-    eq('보충제 합계 비타민D', dn.vitaminD, 25);
-    eq('보충제 합계 비타민C', dn.vitaminC, 1000);
-    eq('하루 2회면 2배로 센다',
-      sup.dailyNutrients([mk('vitamin_c', { dailyDoses: 2 })]).vitaminC, 2000);
-    eq('중지된 건 합계에서 빠진다',
-      sup.dailyNutrients([mk('vitamin_c', { enabled: false })]).vitaminC, 0);
-    eq('유청 단백질은 단백질·칼로리로 잡힌다',
-      sup.dailyNutrients([mk('whey_protein')]).protein, 24);
-
-    /* 상한량(UL) */
-    var noFood = foods.sum([]);
-    eq('평범한 양은 경고 없음', sup.ulWarnings(noFood, sup.dailyNutrients([mk('vitamin_d')])).length, 0);
-
-    var bigD = sup.ulWarnings(noFood, sup.dailyNutrients([mk('vitamin_d', { dailyDoses: 5 })]));
-    ok('비타민 D 125µg 은 상한(100µg) 초과로 잡힌다',
-      bigD.some(function (w) { return w.key === 'vitaminD'; }),
-      bigD.map(function (w) { return w.name; }).join(', '));
-
-    // 마그네슘·비타민E·엽산은 보충제 유래분만 UL 과 비교한다
-    var foodMg = foods.scale('pumpkin_seed', 200);            // 호박씨 200g = 마그네슘 1100mg
-    ok('음식에서 온 마그네슘은 UL 경고를 내지 않는다',
-      !sup.ulWarnings(foodMg, sup.dailyNutrients([])).some(function (w) { return w.key === 'magnesium'; }),
-      String(Math.round(foodMg.magnesium)) + 'mg');
-    ok('보충제에서 온 마그네슘은 UL 경고를 낸다',
-      sup.ulWarnings(noFood, sup.dailyNutrients([mk('magnesium', { dailyDoses: 3 })]))
-        .some(function (w) { return w.key === 'magnesium'; }));
-
-    // 칼슘은 전체 섭취로 비교한다
-    var manyCal = foods.scale('cheddar', 300);                 // 체다 300g = 칼슘 2160mg
-    ok('음식에서 온 칼슘은 UL 경고를 낸다',
-      sup.ulWarnings(manyCal, sup.dailyNutrients([]))
-        .some(function (w) { return w.key === 'calcium'; }),
-      String(Math.round(manyCal.calcium)) + 'mg');
-
-    // 나트륨은 상한이 아니라 목표섭취량이다
-    var saltyDay = foods.scale('kimchi_jjigae', 700);
-    var naWarn = sup.ulWarnings(saltyDay, sup.dailyNutrients([]))
-      .filter(function (w) { return w.key === 'sodium'; })[0];
-    ok('나트륨 초과는 목표섭취량으로 안내한다',
-      naWarn && naWarn.message.indexOf('목표섭취량') >= 0, naWarn && naWarn.message);
-
-    /* 상호작용 룰 */
-    function levels(list, level) {
-      return list.filter(function (r) { return r.level === level; });
-    }
-
-    var clash = sup.interactions([
-      mk('iron', { timeSlot: 'lunch' }), mk('calcium', { timeSlot: 'lunch' })
-    ]);
-    ok('같은 시간대의 철분 + 칼슘은 충돌 경고',
-      levels(clash, 'warn').length === 1, JSON.stringify(clash.map(function (r) { return r.level; })));
-    eq('시간대를 띄우면 경고가 사라진다',
-      levels(sup.interactions([
-        mk('iron', { timeSlot: 'morning' }), mk('calcium', { timeSlot: 'evening' })
-      ]), 'warn').length, 0);
-
-    ok('철분 + 종합비타민도 충돌로 잡는다',
-      levels(sup.interactions([
-        mk('iron', { timeSlot: 'lunch' }), mk('multivitamin', { timeSlot: 'lunch' })
-      ]), 'warn').length === 1);
-
-    ok('철분 + 비타민C 는 좋은 조합',
-      levels(sup.interactions([
-        mk('iron', { timeSlot: 'lunch' }), mk('vitamin_c', { timeSlot: 'lunch' })
-      ]), 'good').length >= 1);
-
-    ok('비타민 D + K2 는 좋은 조합',
-      levels(sup.interactions([
-        mk('vitamin_d', { timeSlot: 'lunch' }), mk('vitamin_k2', { timeSlot: 'lunch' })
-      ]), 'good').some(function (r) { return r.message.indexOf('K2') >= 0; }));
-
-    ok('지용성이 공복에 있으면 식후로 옮기라고 안내한다',
-      levels(sup.interactions([mk('omega3', { timeSlot: 'morning' })]), 'tip')
-        .some(function (r) { return r.message.indexOf('지용성') >= 0; }));
-    ok('지용성이 식사 시간대면 칭찬한다',
-      levels(sup.interactions([mk('omega3', { timeSlot: 'lunch' })]), 'good').length >= 1);
-
-    ok('마그네슘이 아침에 있으면 취침 전을 권한다',
-      levels(sup.interactions([mk('magnesium', { timeSlot: 'morning' })]), 'tip')
-        .some(function (r) { return r.message.indexOf('취침') >= 0; }));
-    eq('취침 전에 있으면 권고 없음',
-      levels(sup.interactions([mk('magnesium', { timeSlot: 'bedtime' })]), 'tip').length, 0);
-
-    eq('중지된 보충제는 룰에서 빠진다',
-      sup.interactions([
-        mk('iron', { timeSlot: 'lunch' }),
-        mk('calcium', { timeSlot: 'lunch', enabled: false })
-      ]).length, 0);
-
-    /* 지난 시간대 판정 */
-    ok('아침 공복은 11시에 지난 시간', sup.isPassed('morning', 11));
-    ok('아침 공복은 8시엔 안 지남', !sup.isPassed('morning', 8));
-    ok('운동 후는 시간과 무관', !sup.isPassed('postWorkout', 23));
-
-    /* review 는 위 결과를 한 번에 모은다 */
-    var rv = sup.review([mk('multivitamin'), mk('vitamin_d')], noFood);
-    ok('review 가 중복을 담는다', rv.duplicates.length >= 1);
-    ok('review 가 영양소 합계를 담는다', rv.nutrients.vitaminD === 35);
-    ok('review 가 UL·상호작용 배열을 담는다',
-      Array.isArray(rv.ul) && Array.isArray(rv.interactions));
-
-    /* 저장 계층 */
-    var supSnapshot = JSON.parse(JSON.stringify(store.load()));
-    store.reset();
-
-    var added = store.addSupplement(sup.fromPreset('omega3'));
-    eq('보충제가 등록된다', store.load().supplements.length, 1);
-    ok('프리셋 정보가 따라온다',
-      added.presetId === 'omega3' && added.nutrients.omega3 === 1000 && added.timeSlot === 'lunch');
-
-    store.updateSupplement(added.id, { timeSlot: 'evening', dailyDoses: 2 });
-    var after2 = store.load().supplements[0];
-    ok('시간대·횟수를 고칠 수 있다',
-      after2.timeSlot === 'evening' && after2.dailyDoses === 2);
-
-    store.updateSupplement(added.id, { nutrients: { omega3: 1500 } });
-    eq('함량을 고칠 수 있다', store.load().supplements[0].nutrients.omega3, 1500);
-
-    var supDay = '2026-08-24';
-    ok('처음엔 안 먹은 상태', !store.isTaken(supDay, added.id));
-    ok('체크하면 먹은 상태', store.toggleTaken(supDay, added.id) === true);
-    ok('저장된다', store.isTaken(supDay, added.id));
-    ok('다시 누르면 해제', store.toggleTaken(supDay, added.id) === false);
-
-    store.toggleTaken(supDay, added.id);
-    store.removeSupplement(added.id);
-    eq('삭제하면 목록에서 빠진다', store.load().supplements.length, 0);
-    ok('삭제하면 지난 체크 표시도 정리된다', !store.isTaken(supDay, added.id));
-
-    store.replace(supSnapshot);
-
-    /* ---- 판정 엔진 (Phase 4) ---- */
-    var judge = FitLog.judge;
-
-    /* 4단계 판정 */
-    eq('권장량의 50%는 부족', judge.levelOf(50, 100).key, 'low');
-    eq('75%는 약간 부족', judge.levelOf(75, 100).key, 'midLow');
-    eq('95%는 적정', judge.levelOf(95, 100).key, 'ok');
-    eq('미량영양소는 130%여도 상한 아래면 적정', judge.levelOf(130, 100, { ul: 200 }).key, 'ok');
-    eq('상한을 넘으면 과다', judge.levelOf(250, 100, { ul: 200 }).key, 'over');
-    eq('상한이 없으면 과다 판정도 없다', judge.levelOf(9999, 100, { ul: null }).key, 'ok');
-    ok('부족이 적정보다 먼저 온다', judge.LEVELS.low.rank < judge.LEVELS.ok.rank);
-
-    // 매크로는 UL 이 없는 대신 초과 자체가 문제다
-    eq('매크로는 110%를 넘으면 과다',
-      judge.levelOf(130, 100, { overRatio: 1.1 }).key, 'over');
-    eq('매크로도 105%면 적정', judge.levelOf(105, 100, { overRatio: 1.1 }).key, 'ok');
-
-    // 부족 판정과 상한 판정은 서로 다른 값을 본다 (마그네슘·비타민E·엽산)
-    eq('상한은 보충제분으로, 부족은 총량으로 본다',
-      judge.levelOf(244, 280, { ul: 350, ulValue: 0 }).key, 'midLow');
-    eq('보충제분이 상한을 넘으면 총량과 무관하게 과다',
-      judge.levelOf(244, 280, { ul: 350, ulValue: 400 }).key, 'over');
-
-    /* 날짜 계산 */
-    eq('하루 전', judge.shiftDays('2026-08-24', -1), '2026-08-23');
-    eq('월 경계를 넘는다', judge.shiftDays('2026-09-01', -1), '2026-08-31');
-    eq('연 경계를 넘는다', judge.shiftDays('2026-01-01', -1), '2025-12-31');
-    eq('최근 7일은 7개', judge.lastDays('2026-08-24', 7).length, 7);
-    eq('마지막 날이 기준일', judge.lastDays('2026-08-24', 7)[6], '2026-08-24');
-    eq('첫날은 6일 전', judge.lastDays('2026-08-24', 7)[0], '2026-08-18');
-
-    /* ---- 검수 기준: 2주치 더미 데이터로 의미 있는 리포트가 나온다 ---- */
-    var judgeSnapshot = JSON.parse(JSON.stringify(store.load()));
-    store.reset();
-
-    var END = '2026-08-24';
-
-    store.update(function (s) {
-      s.profile = {
-        height: 160, age: 50, sex: 'female', weight: 58,
-        skeletalMuscle: 21, bodyFatPct: 32, menopause: true,
-        goals: ['loseFat'], weeklyPlan: { strength: 3, cardio: 2 },
-        createdAt: '2026-08-11'
-      };
-      s.targets = calc.computeTargets(s.profile);
-      return s;
-    });
-
-    // 2주치: 매일 김치찌개+공기밥, 삼겹살, 그릭요거트 — 단백질은 적당, 식이섬유는 부족한 식단
-    var dummyDays = judge.lastDays(END, 14);
-    dummyDays.forEach(function (dayKey, i) {
-      [['kimchi_jjigae_rice', 'lunch'], ['samgyeopsal_set', 'dinner'],
-       ['greek_yogurt_nuts', 'breakfast']].forEach(function (pair) {
-        store.addMeal(dayKey, {
-          type: pair[1], sourceKind: 'template', sourceId: pair[0],
-          label: FitLog.templates.get(pair[0]).name, portion: 1,
-          nutrients: foods.round(FitLog.templates.nutrients(pair[0], 1))
-        });
-      });
-
-      // 근력운동은 주 1회만 — 계획(3회)에 못 미치게 만든다
-      if (i % 7 === 2) {
-        store.addWorkout(dayKey, { type: 'strength', minutes: 50, bodyParts: ['upper'] });
-      }
-      if (i % 3 === 0) {
-        store.addWorkout(dayKey, { type: 'cardio', minutes: 30, intensity: 'moderate' });
-      }
-    });
-
-    store.saveBodyLog({ date: dummyDays[0], weight: 60, skeletalMuscle: 21, bodyFatPct: 33 });
-    store.saveBodyLog({ date: dummyDays[13], weight: 58, skeletalMuscle: 21.4, bodyFatPct: 31.5 });
-
-    var dummy = store.load();
-
-    /* 영양 리포트 */
-    var rep = judge.nutritionReport(dummy, END, 7);
-    eq('최근 7일이 모두 기록됐다', rep.loggedDays, 7);
-    eq('매크로 5종을 낸다', rep.macros.length, 5);
-    eq('미량영양소 14종을 낸다', rep.items.length, 14);
-
-    var kcalRow = rep.macros.filter(function (m) { return m.key === 'kcal'; })[0];
-    ok('하루 평균 칼로리가 계산된다', kcalRow.value > 1000, String(kcalRow.value));
-    ok('모든 항목에 4단계 판정이 붙는다',
-      rep.items.every(function (i) { return !!i.level && !!i.level.key; }));
-
-    var fiberRow = rep.macros.filter(function (m) { return m.key === 'fiber'; })[0];
-    ok('식이섬유 부족이 잡힌다', fiberRow.level.key !== 'ok',
-      fiberRow.value + '/' + fiberRow.target + ' → ' + fiberRow.level.label);
-
-    var naRow = rep.items.filter(function (i) { return i.key === 'sodium'; })[0];
-    eq('나트륨 과다가 잡힌다', naRow.level.key, 'over');
-
-    /* 우선순위 정렬 */
-    var pri = judge.priority(rep);
-    ok('먼저 볼 것이 나온다', pri.length > 0,
-      pri.map(function (p) { return p.name; }).join(', '));
-    var overIdx = pri.map(function (p) { return p.level.key; }).indexOf('over');
-    var lowIdx = pri.map(function (p) { return p.level.key; }).indexOf('low');
-    ok('부족이 과다보다 앞에 온다', lowIdx < 0 || overIdx < 0 || lowIdx < overIdx,
-      '부족 ' + lowIdx + ' / 과다 ' + overIdx);
-
-    /* 기록이 없으면 빈 리포트 */
-    eq('기록 없는 주는 빈 리포트',
-      judge.nutritionReport(dummy, '2020-01-07', 7).loggedDays, 0);
-
-    /* 운동 집계 */
-    var wk = judge.workoutSummary(dummy, END, 7);
-    eq('주간 근력 횟수', wk.strength, 1);
-    eq('계획을 같이 담는다', wk.planStrength, 3);
-    ok('유산소도 센다', wk.cardio >= 2, String(wk.cardio));
-    ok('부위를 모은다', wk.bodyParts.indexOf('upper') >= 0);
-
-    /* 운동 판정 6종 */
-    var wj = judge.workoutJudgments(dummy, END);
-    function has(list, text) {
-      return list.some(function (j) { return j.message.indexOf(text) >= 0; });
-    }
-    ok('룰1 — 남은 근력운동 횟수를 알려준다', has(wj, '근력운동 2회 남았어'),
-      wj.map(function (j) { return j.message; }).join(' | '));
-    ok('룰3 — 근력운동 한 날 단백질 부족을 잡는다', has(wj, '근성장에 손해'));
-    ok('룰4 — 4주간 빠진 부위를 알려준다', has(wj, '빠져 있어'));
-
-    // 룰2: 감량 목표 + 주간 근력 0회 → 근손실 경고 (최우선)
-    var noStrength = JSON.parse(JSON.stringify(dummy));
-    Object.keys(noStrength.dailyLogs).forEach(function (k) {
-      noStrength.dailyLogs[k].workouts = noStrength.dailyLogs[k].workouts
-        .filter(function (w) { return w.type !== 'strength'; });
-    });
-    var wj2 = judge.workoutJudgments(noStrength, END);
-    ok('룰2 — 감량 중 근력 0회면 근손실 경고', has(wj2, '근육이 섞여'));
-    eq('근손실 경고가 맨 앞에 온다', wj2[0].level, 'warn');
-
-    // 룰5: 연속 휴식
-    var noWorkout = JSON.parse(JSON.stringify(dummy));
-    Object.keys(noWorkout.dailyLogs).forEach(function (k) {
-      noWorkout.dailyLogs[k].workouts = [];
-    });
-    ok('룰5 — 연속 휴식 3일 이상이면 알려준다',
-      has(judge.workoutJudgments(noWorkout, END), '운동 기록이 없네'));
-    ok('휴식 일수를 센다', judge.restStreak(noWorkout, END) >= 3,
-      String(judge.restStreak(noWorkout, END)));
-
-    // 룰6: 계획 100% 달성
-    var allDone = JSON.parse(JSON.stringify(dummy));
-    judge.lastDays(END, 5).forEach(function (k) {
-      allDone.dailyLogs[k].workouts = [
-        { id: 'w1', type: 'strength', minutes: 50, bodyParts: ['lower', 'core'] },
-        { id: 'w2', type: 'cardio', minutes: 30, intensity: 'moderate' }
-      ];
-    });
-    ok('룰6 — 계획을 다 채우면 축하한다',
-      has(judge.workoutJudgments(allDone, END), '다 채웠어'));
-
-    /* 신체 변화 판정 */
-    var bj = judge.bodyJudgments(dummy, END);
-    ok('골격근 ↑ 체지방 ↓ 를 칭찬한다', has(bj, '잘 가고 있어'),
-      bj.map(function (j) { return j.message; }).join(' | '));
-
-    var fastLoss = JSON.parse(JSON.stringify(dummy));
-    fastLoss.bodyLogs = [
-      { date: judge.shiftDays(END, -5), weight: 60, skeletalMuscle: null,
-        bodyFatPct: null, visceralRatio: null, waistCm: null },
-      { date: END, weight: 58.5, skeletalMuscle: null,
-        bodyFatPct: null, visceralRatio: null, waistCm: null }
-    ];
-    ok('한 주 1% 넘게 빠지면 속도 경고', has(judge.bodyJudgments(fastLoss, END), '천천히 가자'),
-      judge.bodyJudgments(fastLoss, END).map(function (j) { return j.message; }).join(' | '));
-
-    ok('측정이 1회뿐이면 판정하지 않는다',
-      judge.bodyJudgments({ bodyLogs: [{ date: END, weight: 58 }],
-                            dailyLogs: {}, profile: dummy.profile }, END).length === 0);
-
-    /* 저장 계층 — 운동·인바디 */
-    var wRec = store.addWorkout(END, { type: 'strength', minutes: 45, bodyParts: ['lower'] });
-    ok('운동에 id 가 붙는다', wRec.id.indexOf('wk_') === 0, wRec.id);
-    ok('운동이 저장된다',
-      store.getDay(END).workouts.some(function (w) { return w.id === wRec.id; }));
-    store.removeWorkout(END, wRec.id);
-    ok('운동을 지울 수 있다',
-      !store.getDay(END).workouts.some(function (w) { return w.id === wRec.id; }));
-
-    var beforeCount = store.load().bodyLogs.length;
-    store.saveBodyLog({ date: END, weight: 57, bodyFatPct: 31, waistCm: 72 });
-    eq('같은 날짜는 덮어쓴다', store.load().bodyLogs.length, beforeCount);
-    eq('새 체중이 프로필에 반영된다', store.load().profile.weight, 57);
-    ok('목표치도 다시 계산된다',
-      store.load().targets.meta.computedAt.length > 0 &&
-      store.load().targets.protein === Math.round(57 * 2.0),
-      String(store.load().targets.protein));
-
-    store.replace(judgeSnapshot);
-
-    /* ---- 결과 출력 ---- */
-    var failed = results.filter(function (r) { return !r.pass; });
-
-    if (typeof console.table === 'function') {
-      console.table(results.map(function (r) {
-        return { 결과: r.pass ? 'PASS' : 'FAIL', 항목: r.name, 상세: r.detail || '' };
-      }));
-    }
-    console.log('[FitLog] 테스트 ' + results.length + '건 중 ' +
-      (results.length - failed.length) + '건 통과, ' + failed.length + '건 실패');
-    failed.forEach(function (r) {
-      console.error('FAIL: ' + r.name + ' — ' + (r.detail || ''));
-    });
-
-    return { total: results.length, passed: results.length - failed.length,
-             failed: failed.length, results: results };
-  }
-
-  FitLog.runTests = runTests;
-
-  if (typeof location !== 'undefined' && /[?&]test\b/.test(location.search)) {
-    document.addEventListener('DOMContentLoaded', function () { runTests(); });
-  }
-})(window.FitLog);
-
-</script>
-<script>
 /* app.js — 부팅과 해시 라우팅 */
 
 window.FitLog = window.FitLog || {};
@@ -6674,7 +6162,7 @@ window.FitLog = window.FitLog || {};
   var DEFAULT_TAB = 'today';
 
   // 빌드를 구분하는 표식. 폰이 캐시된 옛 버전을 잡고 있는지 설정 탭에서 확인할 수 있다.
-  var BUILD = '2026-08-25.1';
+  var BUILD = '2026-08-25.5';
 
   /* ---------- 에러 표시 ----------
      조용히 멈추는 게 가장 나쁘다. 잡히지 않은 예외를 화면에 띄워
@@ -6713,6 +6201,39 @@ window.FitLog = window.FitLog || {};
     document.body.appendChild(box);
   }
 
+  /* ---------- 영구 저장 요청 ----------
+     브라우저는 저장 공간이 부족하거나 한동안 안 쓴 사이트의 데이터를 지울 수 있다.
+     iOS 는 7일 미방문 사이트의 script-writable storage 를 정리하는 정책이 있고
+     (홈 화면에 추가한 웹앱은 예외라고 알려져 있다), 이건 앱이 통제할 수 없다.
+     navigator.storage.persist() 로 '지우지 말아 달라' 고 요청은 할 수 있다.
+     브라우저가 거절해도 앱은 그대로 돌아가야 하므로 결과만 기록해 둔다. */
+
+  var storageStatus = 'unknown';
+
+  function requestPersistentStorage() {
+    if (!navigator.storage || !navigator.storage.persist) {
+      storageStatus = 'unsupported';
+      return;
+    }
+
+    navigator.storage.persisted().then(function (already) {
+      if (already) { storageStatus = 'granted'; return true; }
+      return navigator.storage.persist().then(function (ok) {
+        storageStatus = ok ? 'granted' : 'denied';
+        return ok;
+      });
+    }).catch(function () { storageStatus = 'unsupported'; });
+  }
+
+  var STORAGE_LABEL = {
+    granted: '허용됨 (브라우저가 함부로 지우지 않음)',
+    denied: '미허용 (브라우저가 정리할 수 있음)',
+    unsupported: '이 브라우저는 지원 안 함',
+    unknown: '확인 중'
+  };
+
+  function storageStatusText() { return STORAGE_LABEL[storageStatus]; }
+
   /* ---------- 라우터 ---------- */
 
   function currentTab() {
@@ -6720,13 +6241,23 @@ window.FitLog = window.FitLog || {};
     return TABS.indexOf(hash) >= 0 ? hash : DEFAULT_TAB;
   }
 
+  var lastTab = null;
+
   function render() {
     if (!store.hasProfile()) return;
 
     var tab = currentTab();
+
+    // 체크박스 하나 눌러도 화면을 통째로 다시 그린다. 그때마다 맨 위로 올려버리면
+    // 보충제 여러 개를 연달아 체크할 수가 없다. 탭이 바뀔 때만 위로 올린다.
+    var sameTab = (tab === lastTab);
+    var keepY = window.pageYOffset || document.documentElement.scrollTop || 0;
+
     var screen = ui.clear(document.getElementById('screen'));
     screen.appendChild(FitLog.views[tab]());
-    window.scrollTo(0, 0);
+
+    window.scrollTo(0, sameTab ? keepY : 0);
+    lastTab = tab;
 
     document.querySelectorAll('.tab').forEach(function (node) {
       node.setAttribute('aria-selected', String(node.dataset.tab === tab));
@@ -6781,10 +6312,11 @@ window.FitLog = window.FitLog || {};
 
   window.addEventListener('hashchange', onHashChange);
   window.addEventListener('load', registerServiceWorker);
+  window.addEventListener('load', requestPersistentStorage);
   document.addEventListener('DOMContentLoaded', boot);
 
   FitLog.router = { render: render, currentTab: currentTab, TABS: TABS };
-  FitLog.app = { boot: boot, BUILD: BUILD };
+  FitLog.app = { boot: boot, BUILD: BUILD, storageStatusText: storageStatusText };
 })(window.FitLog);
 
 </script>
