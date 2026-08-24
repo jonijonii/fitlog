@@ -3492,6 +3492,93 @@ window.FitLog = window.FitLog || {};
 
 </script>
 <script>
+/* share.js — 만든 파일을 사용자에게 건네는 방법
+ *
+ * 왜 이 파일이 따로 있나:
+ *   <a download> 방식은 iOS, 특히 홈 화면에 추가한 앱 안에서 어색하다.
+ *   파일을 받으면 iOS 가 '이 타입을 열 수 있다고 등록한 앱' 을 전부 나열하는데,
+ *   거기에 인증 앱 같은 엉뚱한 것들이 섞여 나온다 (PASS 등).
+ *   사용자는 "왜 이게 나오지?" 하고 막힌다.
+ *
+ *   Web Share API 로 넘기면 iOS 기본 공유 시트가 뜬다 —
+ *   '파일에 저장', 메일, 카카오톡처럼 사람이 아는 선택지가 나온다.
+ *   지원하지 않는 브라우저(대부분의 PC)에서는 기존 다운로드로 떨어진다.
+ */
+
+window.FitLog = window.FitLog || {};
+
+(function (FitLog) {
+  'use strict';
+
+  /** <a download> 로 내려받기 — PC 와 구형 브라우저용 */
+  function downloadFile(fileName, text, mime) {
+    var blob = new Blob([text], { type: mime });
+    var url = URL.createObjectURL(blob);
+
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    return 'download';
+  }
+
+  function canShareFile(file) {
+    return !!(file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+  }
+
+  /**
+   * 파일을 건넨다. 가능하면 공유 시트, 아니면 다운로드.
+   *
+   * 반드시 버튼 클릭 안에서 동기적으로 불러야 한다 —
+   * 중간에 비동기 작업이 끼면 사용자 제스처가 풀려 공유 시트가 안 뜬다.
+   *
+   * @returns {'share'|'download'}
+   */
+  function deliverFile(fileName, text, mime, onDone) {
+    var file = null;
+    try {
+      file = new File([text], fileName, { type: mime });
+    } catch (e) {
+      file = null;                      // File 생성자가 없는 구형 브라우저
+    }
+
+    // 아래 두 호출은 일부러 내보낸 객체를 거친다.
+    // 내부 함수를 직접 부르면 테스트에서 갈아 끼울 수가 없어
+    // 두 갈래(공유 시트 / 다운로드)를 각각 확인할 방법이 없어진다.
+    if (!FitLog.share.canShareFile(file)) {
+      var how = FitLog.share.downloadFile(fileName, text, mime);
+      if (onDone) onDone(how);
+      return how;
+    }
+
+    navigator.share({ files: [file], title: fileName })
+      .then(function () { if (onDone) onDone('share'); })
+      .catch(function (err) {
+        // 사용자가 공유 시트를 닫은 것뿐이면 다운로드로 또 괴롭히지 않는다.
+        if (err && err.name === 'AbortError') {
+          if (onDone) onDone('cancelled');
+          return;
+        }
+        downloadFile(fileName, text, mime);
+        if (onDone) onDone('download');
+      });
+
+    return 'share';
+  }
+
+  FitLog.share = {
+    deliverFile: deliverFile,
+    downloadFile: downloadFile,
+    canShareFile: canShareFile
+  };
+})(window.FitLog);
+
+</script>
+<script>
 /* backup.js — 데이터 내보내기 / 불러오기 (기기 변경 대비) */
 
 window.FitLog = window.FitLog || {};
@@ -3512,15 +3599,11 @@ window.FitLog = window.FitLog || {};
     var payload = JSON.parse(JSON.stringify(store.load()));
     payload.exportedAt = at;
 
-    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = fileName();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    // iOS 에서는 공유 시트로 넘긴다. 다운로드 방식은 홈 화면 앱 안에서
+    // 엉뚱한 앱 목록이 뜨고 '파일에 저장' 을 찾기 어렵다.
+    FitLog.share.deliverFile(
+      fileName(), JSON.stringify(payload, null, 2), 'application/json');
+
     return payload;
   }
 
@@ -3769,18 +3852,10 @@ window.FitLog = window.FitLog || {};
 
   /* ---------- 다운로드 ---------- */
 
-  function download(fileName, text) {
+  function deliver(fileName, text, onDone) {
     // BOM 이 없으면 한글 엑셀에서 전부 깨져 보인다. 이게 이 함수의 핵심이다.
-    var blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8;' });
-    var url = URL.createObjectURL(blob);
-
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    return FitLog.share.deliverFile(
+      fileName, '﻿' + text, 'text/csv;charset=utf-8;', onDone);
   }
 
   var SHEETS = [
@@ -3789,12 +3864,12 @@ window.FitLog = window.FitLog || {};
     { key: 'body',   label: '인바디 기록', file: '인바디기록', build: bodyLog }
   ];
 
-  function exportSheet(key) {
+  function exportSheet(key, onDone) {
     var sheet = SHEETS.filter(function (s) { return s.key === key; })[0];
     if (!sheet) return null;
 
     var text = sheet.build(store.load());
-    download('fitlog-' + sheet.file + '-' + store.todayKey() + '.csv', text);
+    deliver('fitlog-' + sheet.file + '-' + store.todayKey() + '.csv', text, onDone);
     return text;
   }
 
@@ -3802,6 +3877,7 @@ window.FitLog = window.FitLog || {};
     SHEETS: SHEETS,
     cell: cell,
     toCsv: toCsv,
+    deliver: deliver,
     dailySummary: dailySummary,
     mealDetail: mealDetail,
     bodyLog: bodyLog,
@@ -5624,15 +5700,21 @@ window.FitLog = window.FitLog || {};
       var btn = el('button', { class: 'btn btn-block', type: 'button',
                                text: sheet.label + ' 내보내기' });
       btn.addEventListener('click', function () {
-        FitLog.csv.exportSheet(sheet.key);
-        ui.toast(sheet.label + ' 파일 저장했어.');
+        FitLog.csv.exportSheet(sheet.key, function (how) {
+          if (how === 'cancelled') return;
+          ui.toast(how === 'share'
+            ? sheet.label + ' 파일 만들었어. "파일에 저장" 을 고르면 돼.'
+            : sheet.label + ' 파일 저장했어.');
+        });
       });
       return btn;
     });
 
     wrap.appendChild(ui.card('엑셀로 보기 (CSV)', [
       el('p', { class: 'card-note',
-        text: '엑셀·구글시트에서 바로 열려. 기록을 훑어보거나 트레이너에게 보낼 때 써.' }),
+        text: '엑셀·구글시트에서 바로 열려. 기록을 훑어보거나 트레이너에게 보낼 때 써. ' +
+              '폰에서는 공유 창이 뜨는데 "파일에 저장" 을 고르면 파일 앱에 들어가. ' +
+              '메일이나 메신저로 바로 보낼 수도 있어.' }),
       el('div', { class: 'btn-stack' }, csvButtons)
     ]));
 
@@ -6162,7 +6244,7 @@ window.FitLog = window.FitLog || {};
   var DEFAULT_TAB = 'today';
 
   // 빌드를 구분하는 표식. 폰이 캐시된 옛 버전을 잡고 있는지 설정 탭에서 확인할 수 있다.
-  var BUILD = '2026-08-25.5';
+  var BUILD = '2026-08-25.6';
 
   /* ---------- 에러 표시 ----------
      조용히 멈추는 게 가장 나쁘다. 잡히지 않은 예외를 화면에 띄워
