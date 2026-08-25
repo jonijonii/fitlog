@@ -841,6 +841,25 @@ body.sheet-open { overflow: hidden; }
 .sheet-name { flex: 1; font-size: 14px; font-weight: 600; }
 .sheet-row .btn { flex: 0 0 auto; min-height: 44px; padding: 8px 14px; font-size: 14px; }
 
+/* ---------- 요약 미리보기 ----------
+   요약 텍스트는 공백으로 칸을 맞춘다. 비례 폰트로 보여주면 정렬이 무너져
+   실제로 붙여넣었을 때와 달라 보이므로 고정폭 글꼴을 쓴다. */
+
+.summary-preview {
+  font-family: "SFMono-Regular", Menlo, Consolas, "D2Coding", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 0 0 12px;
+  max-height: 340px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* ---------- 에러 표시 ---------- */
 
 .error-bar {
@@ -2456,8 +2475,11 @@ window.FitLog = window.FitLog || {};
     { id: 'lutein', group: 'omega', name: '루테인', amount: '20 mg', slot: 'lunch',
       doses: 1, tags: ['fatSoluble'], nutrients: {} },
 
-    { id: 'omega3', group: 'omega', name: '오메가3', amount: 'EPA 600 / DHA 400 mg', slot: 'lunch',
-      doses: 1, tags: ['fatSoluble'], nutrients: { omega3: 1000 } },
+    { id: 'omega3', group: 'omega', name: '오메가3', amount: 'EPA+DHA 1,000 mg', slot: 'lunch',
+      doses: 1, tags: ['fatSoluble'], nutrients: { omega3: 1000 },
+      note: '제품 앞면의 "오메가3 1,000mg" 은 보통 어유 전체 무게야. ' +
+            '영양소로 세는 건 그중 EPA+DHA 뿐이라 실제로는 더 적을 수 있어. ' +
+            '뒷면에서 EPA 와 DHA 를 찾아 더한 값으로 고쳐줘 (예: EPA 300 + DHA 200 → 500).' },
 
     { id: 'coq10', group: 'omega', name: '코엔자임Q10', amount: '100 mg', slot: 'lunch',
       doses: 1, tags: ['fatSoluble'], nutrients: {} },
@@ -5333,28 +5355,74 @@ window.FitLog = window.FitLog || {};
 
     wrap.appendChild(alertsCard(state));
 
-    wrap.appendChild(copySummaryCard('오늘 기록 보내기', function () {
-      return FitLog.report.dailyText(store.load(), store.todayKey());
-    }, '오늘 먹은 것·운동·체중을 읽기 좋은 글로 복사해. 트레이너에게 보내거나 AI에 붙여넣어도 돼.'));
+    wrap.appendChild(summaryCard('기록 보내기', {
+      date: true,
+      build: function (dateKey) { return FitLog.report.dailyText(store.load(), dateKey); },
+      hint: '먹은 것·운동·체중을 읽기 좋은 글로 복사해. 날짜를 바꾸면 지난 기록도 볼 수 있어. ' +
+            '트레이너에게 보내거나 AI에 붙여넣어도 돼.'
+    }));
 
     wrap.appendChild(ui.disclaimer());
     return wrap;
   }
 
-  /* 트레이너에게 보낼 요약을 복사한다.
-     CSV 는 기계용이라 카톡에서 쉼표 범벅으로 보인다. 이건 사람이 읽는 평문이다. */
-  function copySummaryCard(title, buildText, hint) {
-    var btn = el('button', { class: 'btn btn-block', type: 'button', text: '요약 복사' });
-    btn.addEventListener('click', function () {
-      var done = FitLog.share.copyText(buildText());
+  /* 트레이너에게 보낼 요약.
+     복사만 시키면 뭐가 나갈지 모르는 채로 붙여넣게 된다. 미리 보여준다. */
+  function summaryCard(title, opts) {
+    var picked = opts.date ? store.todayKey() : null;
+
+    var preview = el('pre', { class: 'summary-preview' });
+
+    function build() {
+      return opts.build(picked);
+    }
+    function refresh() {
+      preview.textContent = build();
+    }
+
+    var head = [];
+
+    if (opts.date) {
+      // 지난 날짜도 볼 수 있어야 한다. 어제 기록을 아침에 보내는 일이 흔하다.
+      var input = el('input', {
+        type: 'date', value: picked, max: store.todayKey(), 'aria-label': '볼 날짜'
+      });
+      input.addEventListener('change', function () {
+        picked = input.value || store.todayKey();
+        refresh();
+      });
+
+      function jump(dayOffset) {
+        picked = FitLog.judge.shiftDays(store.todayKey(), dayOffset);
+        input.value = picked;
+        refresh();
+      }
+
+      var yesterday = el('button', { class: 'btn', type: 'button', text: '어제' });
+      yesterday.addEventListener('click', function () { jump(-1); });
+
+      var todayBtn = el('button', { class: 'btn', type: 'button', text: '오늘' });
+      todayBtn.addEventListener('click', function () { jump(0); });
+
+      head.push(el('div', { class: 'field-inline' }, [yesterday, todayBtn]));
+      head.push(el('div', { class: 'field' }, [input]));
+    }
+
+    refresh();
+
+    var copyBtn = el('button', { class: 'btn btn-primary btn-block', type: 'button',
+                                 text: '요약 복사' });
+    copyBtn.addEventListener('click', function () {
+      var done = FitLog.share.copyText(build());
       ui.toast(done ? '복사했어. 카톡이나 메일에 붙여넣기 해.'
                     : '복사가 안 됐어. 설정에서 파일로 받아줘.');
     });
 
-    return ui.card(title, [
-      btn,
-      el('p', { class: 'card-note', text: hint })
-    ]);
+    return ui.card(title, head.concat([
+      preview,
+      copyBtn,
+      el('p', { class: 'card-note', text: opts.hint })
+    ]));
   }
 
   /* 시간대별 보충제 체크리스트 */
@@ -5391,6 +5459,24 @@ window.FitLog = window.FitLog || {};
     return card;
   }
 
+  /* 화면에 보이는 함량은 반드시 사용자가 저장한 값에서 나와야 한다.
+     프리셋 라벨(preset.amount)을 그대로 쓰면, 사용자가 함량을 고쳤거나
+     내가 프리셋 기본값을 바꿨을 때 표시가 실제 계산값과 어긋난다. */
+  function supplementAmountText(item, preset) {
+    var sup = FitLog.supplements;
+    var keys = Object.keys(item.nutrients || {});
+
+    if (!keys.length) return preset ? preset.amount : '함량 미입력';
+
+    // 성분이 많으면(종합비타민 등) 다 늘어놓을 수 없다
+    if (keys.length > 2) return '성분 ' + keys.length + '종';
+
+    return keys.map(function (k) {
+      var meta = sup.fieldMeta(k);
+      return meta.label + ' ' + item.nutrients[k] + meta.unit;
+    }).join(' · ');
+  }
+
   function supplementRow(item, slotPassed) {
     var on = store.isTaken(store.todayKey(), item.id);
     var preset = item.presetId ? FitLog.supplements.getPreset(item.presetId) : null;
@@ -5407,7 +5493,7 @@ window.FitLog = window.FitLog || {};
       el('span', { class: 'sup-body' }, [
         el('span', { class: 'sup-name', text: item.name }),
         el('span', { class: 'sup-amount',
-          text: (preset ? preset.amount : '') +
+          text: supplementAmountText(item, preset) +
                 (item.dailyDoses > 1 ? ' · 하루 ' + item.dailyDoses + '회' : '') })
       ])
     ]);
@@ -5669,9 +5755,11 @@ window.FitLog = window.FitLog || {};
       text: '마그네슘·비타민 E·엽산은 상한량을 보충제 유래분으로만 따져.' }));
     wrap.appendChild(microCard);
 
-    wrap.appendChild(copySummaryCard('이번 주 요약 보내기', function () {
-      return FitLog.report.weeklyText(store.load(), store.todayKey());
-    }, '평균·운동 달성·체중 변화와 이번 주 갭을 한 장으로 복사해. 미량영양소나 보충제는 안 들어가.'));
+    wrap.appendChild(summaryCard('이번 주 요약 보내기', {
+      date: false,
+      build: function () { return FitLog.report.weeklyText(store.load(), store.todayKey()); },
+      hint: '평균·운동 달성·체중 변화와 이번 주 갭을 한 장으로 복사해. 미량영양소나 보충제는 안 들어가.'
+    }));
 
     wrap.appendChild(ui.disclaimer());
     return wrap;
@@ -6276,6 +6364,19 @@ window.FitLog = window.FitLog || {};
 
     card.appendChild(el('div', { class: 'field-inline' }, [select, addBtn]));
 
+    // 함량 주의가 필요한 것(오메가3·마그네슘)은 고르는 순간 알려준다.
+    // 등록한 뒤 펼쳐야만 보이면 이미 잘못된 값으로 넣은 다음이다.
+    var noteSlot = el('div');
+    card.appendChild(noteSlot);
+
+    select.addEventListener('change', function () {
+      ui.clear(noteSlot);
+      var picked = select.value ? sup.getPreset(select.value) : null;
+      if (picked && picked.note) {
+        noteSlot.appendChild(el('p', { class: 'notice notice-warn', text: picked.note }));
+      }
+    });
+
     /* 목록에 없으면 직접 등록 — 이게 없으면 이 목록이 곧 '먹을 수 있는 것의 전부'가 된다 */
     var formSlot = el('div');
     var openBtn = el('button', { class: 'btn btn-block', type: 'button',
@@ -6565,7 +6666,7 @@ window.FitLog = window.FitLog || {};
   var DEFAULT_TAB = 'today';
 
   // 빌드를 구분하는 표식. 폰이 캐시된 옛 버전을 잡고 있는지 설정 탭에서 확인할 수 있다.
-  var BUILD = '2026-08-25.10';
+  var BUILD = '2026-08-25.13';
 
   /* ---------- 에러 표시 ----------
      조용히 멈추는 게 가장 나쁘다. 잡히지 않은 예외를 화면에 띄워
