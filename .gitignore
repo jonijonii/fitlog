@@ -1,0 +1,18 @@
+# 의존성
+node_modules/
+
+# OS 부스러기
+.DS_Store
+Thumbs.db
+
+# 개인 백업 파일 (실제 기록이 담긴 내보내기 JSON)
+fitlog-backup-*.json
+fitlog-*.csv
+
+# 빌드 결과물 — dist/ 는 배포용 별도 git 저장소로 관리한다.
+# 소스 저장소에서 또 관리하면 같은 산출물이 두 곳에서 충돌한다.
+dist/
+
+# 스크래치·임시
+*.log
+tmp/

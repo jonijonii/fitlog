@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#111827">
+<title>FitLog</title>
+
+<!-- 홈 화면에 추가했을 때 앱처럼 뜨게 하는 설정.
+     iOS 는 manifest 를 거의 안 보고 아래 apple-* 메타를 본다. 둘 다 넣는다.
+     status-bar-style 을 black-translucent 로 하면 밝은 테마에서 상태바 글씨가 안 보여서 default 로 둔다. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="FitLog">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- 온보딩 오버레이 -->
+<div id="onboarding" class="onboarding" hidden>
+  <div class="ob-shell">
+    <header class="ob-head">
+      <div class="ob-steps" id="obSteps"></div>
+      <h1 class="ob-title" id="obTitle">시작하기</h1>
+      <p class="ob-desc" id="obDesc"></p>
+    </header>
+    <div class="ob-body" id="obBody"></div>
+    <footer class="ob-foot">
+      <button class="btn btn-ghost" id="obBack" type="button">뒤로</button>
+      <button class="btn btn-ghost" id="obSkip" type="button" hidden>건너뛰기</button>
+      <button class="btn btn-primary" id="obNext" type="button">다음</button>
+    </footer>
+  </div>
+</div>
+
+<!-- 메인 앱 -->
+<div id="app" class="app" hidden>
+  <main class="screen" id="screen"></main>
+
+  <nav class="tabbar" role="tablist" aria-label="주 메뉴">
+    <a class="tab" href="#today" data-tab="today" role="tab">
+      <span class="tab-ico" aria-hidden="true">●</span><span class="tab-label">오늘</span>
+    </a>
+    <a class="tab" href="#week" data-tab="week" role="tab">
+      <span class="tab-ico" aria-hidden="true">▤</span><span class="tab-label">주간</span>
+    </a>
+    <a class="tab" href="#inbody" data-tab="inbody" role="tab">
+      <span class="tab-ico" aria-hidden="true">◈</span><span class="tab-label">인바디</span>
+    </a>
+    <a class="tab" href="#settings" data-tab="settings" role="tab">
+      <span class="tab-ico" aria-hidden="true">⚙</span><span class="tab-label">설정</span>
+    </a>
+  </nav>
+</div>
+
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="js/env.js"></script>
+<script src="js/store.js"></script>
+<script src="js/nutrition.js"></script>
+<script src="js/foods.js"></script>
+<script src="js/templates.js"></script>
+<script src="js/supplements.js"></script>
+<script src="js/judge.js"></script>
+<script src="js/calc.js"></script>
+<script src="js/share.js"></script>
+<script src="js/backup.js"></script>
+<script src="js/csv.js"></script>
+<script src="js/report.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/sheet.js"></script>
+<script src="js/onboarding.js"></script>
+<script src="js/views.js"></script>
+<script src="js/tests.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

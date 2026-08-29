@@ -1,0 +1,591 @@
+<title>FitLog 인계 노트</title>
+
+<style>
+  /* ── 팔레트: 차가운 종이 위의 잉크. 엔지니어링 리포트 결.
+        light 를 :root 에 전부 정의하고, 다크는 토큰만 다시 잡는다. ── */
+  :root {
+    --ground: #EDF0F3;
+    --surface: #FFFFFF;
+    --sunken: #E3E8ED;
+    --ink: #141A21;
+    --muted: #5A6673;   /* 파랑 쪽으로 살짝 치우친 회색 */
+    --line: #D5DCE3;
+    --accent: #1F5F8B;
+    --brick: #8C3A2E;   /* 문제 */
+    --moss: #3D6B4A;    /* 해결 */
+    --amber: #8A6420;   /* 주의 */
+
+    --sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+            "Malgun Gothic", "Segoe UI", "Noto Sans KR", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
+            "Apple SD Gothic Neo", monospace;
+
+    --measure: 43rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #12161B;
+      --surface: #1A1F26;
+      --sunken: #0D1116;
+      --ink: #E4E8EC;
+      --muted: #8D98A5;
+      --line: #2A323B;
+      --accent: #6FA8CF;
+      --brick: #C97B6C;
+      --moss: #7FA98C;
+      --amber: #C6A15C;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #12161B;
+    --surface: #1A1F26;
+    --sunken: #0D1116;
+    --ink: #E4E8EC;
+    --muted: #8D98A5;
+    --line: #2A323B;
+    --accent: #6FA8CF;
+    --brick: #C97B6C;
+    --moss: #7FA98C;
+    --amber: #C6A15C;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.7;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .wrap {
+    max-width: var(--measure);
+    margin: 0 auto;
+    padding: 4rem 1.25rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.5rem;
+  }
+
+  /* ── 머리말 ── */
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 .6rem;
+  }
+
+  h1 {
+    font-size: clamp(1.9rem, 6vw, 2.6rem);
+    line-height: 1.2;
+    letter-spacing: -.02em;
+    font-weight: 800;
+    margin: 0 0 .8rem;
+    text-wrap: balance;
+  }
+
+  .lede {
+    color: var(--muted);
+    font-size: 1.02rem;
+    margin: 0;
+    max-width: 34rem;
+  }
+
+  h2 {
+    font-size: 1.35rem;
+    letter-spacing: -.015em;
+    font-weight: 750;
+    margin: 0 0 1rem;
+    padding-bottom: .55rem;
+    border-bottom: 2px solid var(--ink);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-size: 1.02rem;
+    font-weight: 700;
+    margin: 0 0 .4rem;
+    letter-spacing: -.01em;
+  }
+
+  p { margin: 0 0 1rem; }
+  p:last-child { margin-bottom: 0; }
+
+  section > .body > *:last-child { margin-bottom: 0; }
+
+  strong { font-weight: 700; }
+  code {
+    font-family: var(--mono);
+    font-size: .87em;
+    background: var(--sunken);
+    padding: .12em .38em;
+    border-radius: 3px;
+  }
+
+  /* ── 한눈에: 사실 목록 ── */
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .fact { background: var(--surface); padding: .9rem 1rem; }
+  .fact dt {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: .3rem;
+  }
+  .fact dd {
+    margin: 0;
+    font-size: .95rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 레이어 다이어그램 ── */
+
+  .layers {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    margin: 0 0 1.25rem;
+  }
+  .layer {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: .7rem .9rem;
+  }
+  .layer-name {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: block;
+    margin-bottom: .35rem;
+  }
+  .layer-mods {
+    font-family: var(--mono);
+    font-size: .84rem;
+    line-height: 1.6;
+    word-break: break-word;
+  }
+  .layer-mods em { color: var(--muted); font-style: normal; }
+
+  /* ── 표 ── */
+
+  .scroll { overflow-x: auto; margin: 0 0 1.25rem; }
+  table {
+    width: 100%;
+    min-width: 30rem;
+    border-collapse: collapse;
+    font-size: .92rem;
+  }
+  th, td {
+    text-align: left;
+    padding: .6rem .7rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--ink);
+    white-space: nowrap;
+  }
+  td code { background: none; padding: 0; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* ── 약점 항목 ── */
+
+  .weak {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--amber);
+    border-radius: 0 6px 6px 0;
+    padding: .9rem 1.1rem;
+    margin-bottom: .75rem;
+  }
+  .weak:last-child { margin-bottom: 0; }
+  .weak p { font-size: .93rem; color: var(--muted); }
+  .weak p strong { color: var(--ink); }
+  .weak .rank {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--amber);
+    letter-spacing: .1em;
+  }
+
+  /* ── 버그: 실패 종류로 묶음 ── */
+
+  .class-tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--brick);
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    padding: .12rem .45rem;
+    margin-bottom: .9rem;
+  }
+  .class-note { color: var(--muted); font-size: .9rem; margin: -.5rem 0 1rem; }
+
+  .bug {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1rem 1.1rem;
+    margin-bottom: .75rem;
+  }
+  .bug:last-child { margin-bottom: 0; }
+  .bug p { font-size: .93rem; margin-bottom: .6rem; }
+  .fix {
+    display: flex;
+    gap: .5rem;
+    font-size: .88rem;
+    color: var(--moss);
+    border-top: 1px dashed var(--line);
+    padding-top: .6rem;
+    margin: 0;
+  }
+  .fix::before { content: "→"; flex: none; }
+  .severe { border-left: 3px solid var(--brick); }
+
+  /* ── 질문 ── */
+
+  ol.asks { margin: 0; padding-left: 0; list-style: none; counter-reset: q; }
+  ol.asks li {
+    counter-increment: q;
+    display: flex;
+    gap: .8rem;
+    padding: .7rem 0;
+    border-bottom: 1px solid var(--line);
+    font-size: .95rem;
+  }
+  ol.asks li:last-child { border-bottom: none; }
+  ol.asks li::before {
+    content: counter(q);
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--accent);
+    flex: none;
+    width: 1.4rem;
+    padding-top: .12rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 배운 것 ── */
+
+  .lesson { margin-bottom: 1.4rem; }
+  .lesson:last-child { margin-bottom: 0; }
+  .lesson h3 { color: var(--accent); }
+  .lesson p { font-size: .93rem; color: var(--muted); margin: 0; }
+  .lesson p strong { color: var(--ink); }
+
+  ul.plain { margin: 0 0 1rem; padding-left: 1.1rem; }
+  ul.plain li { margin-bottom: .35rem; font-size: .93rem; }
+
+  a { color: var(--accent); }
+  a:focus-visible, :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.2rem;
+    color: var(--muted);
+    font-size: .85rem;
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">코드 리뷰 인계</p>
+    <h1>FitLog 인계 노트</h1>
+    <p class="lede">
+      영양·운동 기록 웹앱을 만들어 배포하기까지. 무엇이 있고, 어디가 약하고,
+      어떤 버그가 왜 났는지. 이 문서만 읽어도 무엇을 물어볼지 알 수 있게 정리했다.
+    </p>
+  </header>
+
+  <section>
+    <h2>한눈에</h2>
+    <div class="body">
+      <dl class="facts">
+        <div class="fact"><dt>형태</dt><dd>단일 HTML PWA</dd></div>
+        <div class="fact"><dt>서버</dt><dd>없음</dd></div>
+        <div class="fact"><dt>라이브러리</dt><dd>없음</dd></div>
+        <div class="fact"><dt>저장</dt><dd>localStorage</dd></div>
+        <div class="fact"><dt>JS 규모</dt><dd>3,800줄</dd></div>
+        <div class="fact"><dt>테스트</dt><dd>608건</dd></div>
+        <div class="fact"><dt>배포 크기</dt><dd>337 KB</dd></div>
+        <div class="fact"><dt>사용자</dt><dd>본인 + 친구</dd></div>
+      </dl>
+      <p style="margin-top:1.25rem">
+        먹은 음식·보충제·운동을 기록하면 부족한 영양소와 운동을 알려준다.
+        데이터는 각자 브라우저에만 남고 서버로 나가지 않는다.
+        테스트 608건은 단위 395 · 브라우저(jsdom) 193 · 서비스워커 20의 합이다.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>아키텍처</h2>
+    <div class="body">
+      <p>의존은 위에서 아래로만 흘러야 하는데 <strong>역방향 3개와 순환 1개</strong>가 있다.</p>
+
+      <div class="layers">
+        <div class="layer">
+          <span class="layer-name">화면</span>
+          <div class="layer-mods">app.js <em>부팅·라우팅·날짜 롤오버</em><br>
+            views.js <em>4개 탭 전부, 1,352줄</em><br>
+            onboarding.js · sheet.js · ui.js</div>
+        </div>
+        <div class="layer">
+          <span class="layer-name">도메인</span>
+          <div class="layer-mods">judge.js <em>판정</em> · report.js <em>요약 텍스트</em><br>
+            supplements.js · templates.js · csv.js · backup.js</div>
+        </div>
+        <div class="layer">
+          <span class="layer-name">기반</span>
+          <div class="layer-mods">calc.js · store.js<br>
+            foods.js · nutrition.js · share.js <em>의존 없음</em></div>
+        </div>
+      </div>
+
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>방향</th><th>무엇</th><th>왜 문제인가</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>store → calc</code></td>
+              <td><code>saveBodyLog</code>가 <code>computeTargets</code> 호출</td>
+              <td>저장 계층이 도메인 계산을 한다. 체중 저장이 목표치 재계산을 부르는 게 store 안에 숨어 있다</td>
+            </tr>
+            <tr>
+              <td><code>ui → calc</code></td>
+              <td><code>goalChips</code>가 목표 규칙을 앎</td>
+              <td>UI 컴포넌트가 도메인 지식을 가진다</td>
+            </tr>
+            <tr>
+              <td><code>supplements → store</code></td>
+              <td><code>newId</code> 하나 때문</td>
+              <td>데이터 모듈이 저장 계층에 묶인다</td>
+            </tr>
+            <tr>
+              <td><code>views ↔ app</code></td>
+              <td>views가 <code>router.render()</code> 호출</td>
+              <td>순환. 런타임 호출이라 동작은 하지만 구조상 고리</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>구조적 약점</h2>
+    <div class="body">
+      <div class="weak">
+        <span class="rank">가장 시급</span>
+        <h3><code>views.js</code>가 1,352줄</h3>
+        <p>오늘·주간·인바디·설정 4개 탭과 30개 함수가 한 파일에. 가장 긴 함수 셋이 100줄을 넘는다
+          (<code>profileCard</code> 122, <code>supplementEditRow</code> 115, <code>settings</code> 112).</p>
+      </div>
+
+      <div class="weak">
+        <h3>전역 재렌더</h3>
+        <p>상태가 바뀌면 화면을 통째로 다시 그린다. 단순해서 좋았지만
+          <strong>스크롤 튐·포커스 손실·날짜 미갱신 버그가 전부 여기서 나왔다.</strong>
+          지금은 규칙 넷으로 막고 있는데, 규칙을 기억해야만 안전한 구조다.</p>
+      </div>
+
+      <div class="weak">
+        <h3>로드 순서가 곧 의존 그래프</h3>
+        <p>모듈 시스템이 없어 <code>index.html</code>의 <code>&lt;script&gt;</code> 순서가 계약이다.
+          파일을 추가할 때 순서를 틀리면 조용히 깨진다.</p>
+      </div>
+
+      <div class="weak">
+        <h3>칩 그룹 로직이 4개 파일에 중복</h3>
+        <p><code>onboarding.js</code>, <code>sheet.js</code>, <code>ui.js</code>, <code>views.js</code>.
+          <code>ui.goalChips</code>로 일부만 통합했고 나머지는 각자 구현.</p>
+      </div>
+
+      <div class="weak">
+        <h3><code>tests.js</code>가 단일 함수 1,417줄</h3>
+        <p><code>runTests()</code> 하나에 395건. 어디가 깨졌는지 찾기 어렵고, 일부만 돌릴 수 없다.
+          브라우저 콘솔에서도 돌아야 한다는 제약이 있어 쪼개기가 간단치 않다.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>버그 회고</h2>
+    <div class="body">
+      <p>발생 순서가 아니라 <strong>실패의 종류</strong>로 묶었다. 같은 종류가 반복됐다.</p>
+
+      <span class="class-tag">침묵 실패</span>
+      <p class="class-note">에러도 안 나고 아무 표시도 없이 안 되는 것. 사용자에겐 “버튼이 안 눌린다”로만 보인다.</p>
+
+      <div class="bug">
+        <h3>온보딩 ‘시작하기’가 안 눌림</h3>
+        <p><code>store.todayKey()</code>가 <code>padStart</code>(ES2017)를 썼다. 구형 브라우저에서 그 줄만 죽는데,
+          요약 화면은 그 함수를 안 거쳐서 멀쩡히 떴다.</p>
+        <p class="fix">ES5 정적 검사를 테스트에 넣어 <code>src/js</code> 전체를 훑게 함</p>
+      </div>
+
+      <div class="bug severe">
+        <h3>서비스워커가 앱을 통째로 막음</h3>
+        <p><code>cache.addAll</code>은 전부-아니면-전무다. 파일 하나만 실패해도 통째로 거부되어
+          <strong>캐시가 텅 빈 채로 워커가 켜졌고</strong>, 그 상태에서 페이지 요청에 빈 504를 주자
+          사파리가 “인터넷에 연결되어 있지 않습니다”로 막았다.
+          <strong>앱이 안 열리니 새 워커를 받을 기회도 없어 빠져나올 수 없었다.</strong></p>
+        <p class="fix"><code>cache.add</code>를 하나씩 / 페이지엔 빈 응답 금지 / 자가 복구 화면 + <code>?nosw</code> 탈출구</p>
+      </div>
+
+      <span class="class-tag">표시가 거짓말</span>
+      <p class="class-note">데이터와 계산은 맞는데 화면이 다른 것을 보여준다. 데이터가 틀린 것보다 나쁘다 — 앱을 못 믿게 된다.</p>
+
+      <div class="bug">
+        <h3>온보딩이 안 닫힘</h3>
+        <p><code>.onboarding { display: flex }</code>가 브라우저 기본 <code>[hidden]{display:none}</code>을 이겼다.
+          JS는 정상이라 에러도 안 났고, jsdom은 우선순위를 다르게 계산해서
+          <strong>스모크 105건이 전부 통과했다.</strong></p>
+        <p class="fix">전역 <code>[hidden]{display:none !important}</code> + CSS 소스 직접 검사</p>
+      </div>
+
+      <div class="bug">
+        <h3>보충제 함량 표시가 실제 값과 다름</h3>
+        <p>체크리스트가 <code>preset.amount</code>(고정 라벨)를 보여줬다. 사용자가 함량을 고쳐도 화면은 그대로.</p>
+        <p class="fix">화면 값은 저장된 데이터에서만 뽑기</p>
+      </div>
+
+      <span class="class-tag">환경 차이</span>
+      <p class="class-note">내 쪽에서는 재현되지 않는 것. 폰에서 도는 앱을 폰 없이 만들었다.</p>
+
+      <div class="bug">
+        <h3>자정을 넘겨도 어제 화면</h3>
+        <p>홈 화면 앱은 껐다 켜지 않으면 계속 살아 있는데, 날짜가 바뀌어도 다시 그리는 코드가 없었다.</p>
+        <p class="fix"><code>visibilitychange</code>/<code>focus</code>/<code>pageshow</code>에서 날짜 비교 후 재렌더</p>
+      </div>
+
+      <div class="bug">
+        <h3>판정 로직 두 곳이 뒤섞임</h3>
+        <p>지방 256%가 적정으로, 마그네슘 87%가 부족으로 나왔다. 매크로와 미량영양소는 ‘과다’의 기준이
+          다르고(110% vs 상한량), 부족 판정과 상한 판정은 <strong>서로 다른 값</strong>을 봐야 하는데 하나로 처리했다.
+          <strong>테스트를 통과한 채로 있었고, 리포트를 눈으로 읽다가 찾았다.</strong></p>
+        <p class="fix">두 판정을 분리하고 각각 테스트</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>검증 장치</h2>
+    <div class="body">
+      <div class="scroll">
+        <table>
+          <thead><tr><th>종류</th><th>명령</th><th>잡는 것</th></tr></thead>
+          <tbody>
+            <tr><td>단위</td><td><code>node tests/run-tests.js</code></td><td>계산·판정·저장 로직</td></tr>
+            <tr><td>정적</td><td>위 명령에 포함</td><td>ES5 문법, <code>[hidden]</code> CSS 규칙, 배포 묶음 무결성</td></tr>
+            <tr><td>브라우저</td><td>jsdom으로 실제 클릭</td><td>온보딩~기록~공유 전 과정</td></tr>
+            <tr><td>서비스워커</td><td>가짜 caches/fetch 환경</td><td>오프라인·설치 실패·복구</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>이 장치들이 못 잡는 것</h3>
+      <ul class="plain">
+        <li>실제 iOS/안드로이드 동작 — 공유 시트, 홈 화면 설치, 저장소 정리 정책</li>
+        <li>보기 좋은지, 쓰기 편한지</li>
+        <li>영양소 값의 정확성 (전부 추정치)</li>
+        <li>jsdom과 실제 브라우저가 다르게 동작하는 부분</li>
+      </ul>
+
+      <h3>테스트 작성 시 함정 셋 — 실제로 다 겪음</h3>
+      <ul class="plain">
+        <li>jsdom을 믿지 말 것. CSS 우선순위를 실제와 다르게 계산한다</li>
+        <li>함수를 갈아끼우지 말고 환경을 바꿀 것. <code>todayKey</code>만 스텁하면 내부 호출은 여전히 진짜 날짜를 본다</li>
+        <li>갈아끼울 자리가 필요하면 내보낸 객체를 거치게 할 것</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>새 세션에 물어볼 것</h2>
+    <div class="body">
+      <ol class="asks">
+        <li><code>views.js</code> 1,352줄을 어떻게 쪼갤까? 탭별 파일이 맞나, 다른 축이 나은가?</li>
+        <li>역방향 의존 3개를 풀 가치가 있나? 특히 <code>store → calc</code>. 이 규모에선 과한가?</li>
+        <li>전역 재렌더를 유지할까? 규칙 넷으로 막고 있는데 구조를 바꾸는 게 나은가?</li>
+        <li>모듈 시스템 없이 로드 순서에 의존하는 게 언제 문제가 되나? 지금 막을 방법이 있나?</li>
+        <li><code>tests.js</code> 1,417줄 단일 함수를 어떻게 나눌까? 브라우저에서도 돌아야 한다.</li>
+        <li>비개발자용 앱에서 서비스워커가 값어치를 하나? 이번에 앱을 통째로 막았는데 오프라인을 포기하는 게 나은가?</li>
+        <li>놓치고 있는 실패 유형이 또 있나? 침묵 실패 / 표시 거짓말 / 환경 차이 — 이 셋 말고.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <h2>다음에 더 잘하려면</h2>
+    <div class="body">
+      <div class="lesson">
+        <h3>먼저 실패 유형을 정하고 방어를 깐다</h3>
+        <p>ES5 검사도, CSS 검사도, 배포 검사도 전부 <strong>사고가 난 뒤에</strong> 만들었다.
+          폰에서 도는 앱을 폰 없이 만든다는 걸 처음부터 전제했다면 순서가 반대였을 것이다.</p>
+      </div>
+
+      <div class="lesson">
+        <h3>가드는 일부러 깨뜨려 확인한다</h3>
+        <p>아무것도 안 잡는 가드를 통과했다고 착각하기 쉽다. 아이콘을 지우고, 캐시 버전을 어긋내고,
+          CSS 규칙을 빼서 <strong>실제로 실패하는지</strong> 봤다.</p>
+      </div>
+
+      <div class="lesson">
+        <h3>테스트 통과와 정상 동작은 다르다</h3>
+        <p>판정 로직 버그 둘은 테스트를 통과한 채로 있었고 출력을 눈으로 읽다가 찾았다.
+          <strong>결과물을 사람이 읽어보는 단계</strong>가 자동 검증만큼 중요했다.</p>
+      </div>
+
+      <div class="lesson">
+        <h3>스펙을 살아 있는 문서로</h3>
+        <p>작업지시서가 처음 지시에서 903줄로 자랐다. 배포 후 피드백으로 바뀐 결정과
+          <strong>그 이유</strong>를 같이 적어두니 “왜 이렇게 했지?”가 사라졌다.</p>
+      </div>
+
+      <div class="lesson">
+        <h3>개인 정보는 처음부터 넣지 않는다</h3>
+        <p>placeholder 예시값, 보충제 프리셋 목록, 스펙 문서의 신체 수치 — 세 번 다 나중에 걷어냈다.
+          공개 저장소에 올릴 것을 알았다면 처음부터 일반값을 썼을 것이다.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    같은 내용이 저장소의 <code>REVIEW.md</code>에도 있다. 상세 설계 근거는 <code>CLAUDE.md</code> 903줄에.
+  </footer>
+
+</div>
