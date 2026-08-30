@@ -939,50 +939,24 @@ body.sheet-open { overflow: hidden; }
 
 /* ---------- 부족 영양소 음식 제안 (주간 탭) ---------- */
 
-.suggest-list { margin-top: 10px; }
+/* 읽고 참고하는 정보다 — 버튼도 카드도 없다.
+   다음 주 식단을 고를 때 '뭐가 모자랐고 뭘 더 먹으면 되나' 만 알면 된다. */
 
-.suggest-item {
-  padding: 10px;
-  background: var(--surface-2);
-  border-radius: 10px;
-  margin-bottom: 8px;
-}
-.suggest-item:last-child { margin-bottom: 0; }
-
-.suggest-head {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.suggest-name { font-size: 15px; font-weight: 600; }
-.suggest-serving { font-size: 13px; color: var(--text-dim); }
-
-.suggest-meta {
-  font-size: 12px;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-  margin-top: 2px;
+.suggest-headline {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  line-height: 1.5;
 }
 
-.suggest-covers {
-  font-size: 13px;
-  color: var(--ok);
-  margin-top: 4px;
-}
-
-.suggest-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
-/* 터치 타겟 44px 을 지키면서 두 버튼이 한 줄에 들어가야 한다 (기준 폭 375px) */
-.suggest-actions .suggest-btn {
-  flex: 1;
-  min-height: 44px;
-  padding: 8px 10px;
+.suggest-line {
   font-size: 14px;
+  line-height: 1.65;
+  margin: 0 0 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent-soft);
 }
+.suggest-line:last-of-type { margin-bottom: 0; }
 
 /* ---------- 하단 고지 ---------- */
 
@@ -4142,7 +4116,8 @@ window.FitLog = window.FitLog || {};
   var COVER_RATIO = 0.15;
 
   var TOP_GAPS = 3;      // 부족 영양소는 상위 3개만 본다
-  var MAX_CARDS = 6;     // 최종 노출 4~6개
+  var PER_NUTRIENT = 3;  // 영양소 하나에 음식 3개까지 이름을 댄다
+  var MAX_CARDS = 6;     // candidates() 기본 상한
   var HIGH_KCAL = 250;   // loseFat 일 때 이 위는 하단으로 (제외하지는 않는다)
   var MIN_DAYS = 3;      // 주간 기록이 이보다 적으면 판정 신뢰도가 낮다
 
@@ -4212,6 +4187,25 @@ window.FitLog = window.FitLog || {};
   /** 예: withParticle('오메가3 (EPA+DHA)', '은', '는') → '오메가3는' */
   function withParticle(word, whenJong, whenNone) {
     return plain(word) + (hasJong(word) ? whenJong : whenNone);
+  }
+
+  /** '으로/로' 만 규칙이 다르다 — 받침이 없거나 ㄹ 이면 '로' 다 (시금치로, 굴로, 김으로). */
+  function withRo(word) {
+    var w = plain(word);
+    if (!hasJong(w)) return w + '로';
+    var code = w.charCodeAt(w.length - 1);
+    if (code >= 0xAC00 && code <= 0xD7A3 && (code - 0xAC00) % 28 === 8) return w + '로';
+    return w + '으로';
+  }
+
+  /** 영양소 이름 잇기. 둘이면 '칼륨과 칼슘', 셋 이상이면 쉼표로 잇는다. */
+  function joinNutrients(names) {
+    if (!names.length) return '';
+    if (names.length === 1) return plain(names[0]);
+    if (names.length === 2) {
+      return withParticle(names[0], '과', '와') + ' ' + plain(names[1]);
+    }
+    return names.map(plain).join(', ');
   }
 
   /** 그 영양소의 하루 목표치. 매크로와 미량영양소가 다른 자리에 있다. */
@@ -4372,6 +4366,27 @@ window.FitLog = window.FitLog || {};
   }
 
   /**
+   * 한 영양소를 채울 음식을 고른다.
+   *
+   * 순서는 **1회 섭취량이 하루 필요량의 몇 %를 채우느냐** 다.
+   * '한 번 먹으면 얼마나 채워지나' 가 이 화면에서 알고 싶은 것이라서다.
+   * (여러 영양소를 한꺼번에 보던 때는 커버 개수가 1차였는데, 영양소별로 나눠 보면
+   *  개수가 전부 1이라 의미가 없다.)
+   */
+  function foodsFor(state, gap, opts) {
+    var o = opts || {};
+    var limit = o.limit === undefined ? PER_NUTRIENT : o.limit;
+
+    var ranked = candidates(state, [gap], { limit: 0, foods: o.foods });
+    ranked.sort(function (a, b) {
+      if (a.heavy !== b.heavy) return a.heavy ? 1 : -1;   // 감량 중이면 무거운 건 뒤로
+      return b.covers[0].pct - a.covers[0].pct;
+    });
+
+    return limit > 0 ? ranked.slice(0, limit) : ranked;
+  }
+
+  /**
    * 커버할 음식이 없는 영양소에 붙일 한 줄.
    * 부정확한 제안을 하느니 안 한다 — 음식 카드 없이 사실만 알린다.
    * 제품·용량·브랜드는 말하지 않고, '이런 선택지가 있다' 까지만.
@@ -4426,7 +4441,7 @@ window.FitLog = window.FitLog || {};
       return {
         show: true, kind: 'tooFewDays', loggedDays: report.loggedDays,
         message: '기록이 더 쌓이면 제안해 줄게.',
-        gaps: [], overs: [], foods: [], notes: [], uncovered: []
+        gaps: [], overs: [], lines: [], notes: [], uncovered: [], headline: ''
       };
     }
 
@@ -4436,53 +4451,50 @@ window.FitLog = window.FitLog || {};
     if (!gapList.length && !overList.length) {
       return {
         show: false, kind: 'none', loggedDays: report.loggedDays,
-        gaps: [], overs: [], foods: [], notes: [], uncovered: []
+        gaps: [], overs: [], lines: [], notes: [], uncovered: [], headline: ''
       };
     }
 
-    // 먼저 후보 전체를 순위대로 뽑는다. 잘라낸 뒤에 커버 여부를 따지면 안 된다 —
-    // 상위 6개에 못 든 것까지 '음식으로 채우기 어렵다' 고 말하게 되는데, 그건 거짓말이다.
-    var ranked = gapList.length ? candidates(state, gapList, { limit: 0 }) : [];
-
-    /* 부족 영양소마다 대표 한 개는 자리를 준다.
-     * 안 그러면 '2개 커버' 음식들이 여섯 자리를 다 먹고,
-     * 채울 음식이 분명히 있는 영양소가 화면에서 통째로 빠진다.
-     * (실제로 그랬다 — 비타민 E 는 아몬드로 채워지는데 생선 카드에 밀려 사라졌다) */
-    var seen = {};
-    gapList.forEach(function (gap) {
-      if (countKeys(seen) >= MAX_CARDS) return;
-      for (var i = 0; i < ranked.length; i++) {
-        if (seen[ranked[i].id]) continue;
-        if (coversKey(ranked[i], gap.key)) { seen[ranked[i].id] = true; return; }
-      }
-    });
-
-    for (var j = 0; j < ranked.length && countKeys(seen) < MAX_CARDS; j++) {
-      seen[ranked[j].id] = true;
-    }
-
-    // 표시 순서는 원래 순위를 따른다. 대표를 먼저 고른 건 자리 확보지 순서 규칙이 아니다.
-    var foodCards = ranked.filter(function (card) { return seen[card.id]; });
-
-    // 후보 전체를 봐도 못 채우는 것만 문구로 알린다
-    var coveredKeys = {};
-    ranked.forEach(function (card) {
-      card.covers.forEach(function (c) { coveredKeys[c.key] = true; });
-    });
-
+    /* 영양소별로 '뭘 먹으면 채워지나' 를 한 줄씩 만든다.
+     *
+     * 음식별 카드로 묶었다가 되돌린 자리다. 사용자가 원한 건 기록 버튼이 아니라
+     * **다음 주 식단을 고를 때 참고할 정보** 였다:
+     *   "이번 주엔 칼륨과 칼슘이 부족하네.
+     *    칼륨은 감자, 고구마, 시금치로 보충할 수 있어."
+     * 그래서 영양소를 앞에 세우고 음식 이름만 댄다. 버튼도 두지 않는다. */
+    var lines = [];
     var uncovered = [];
+
     gapList.forEach(function (gap) {
-      if (coveredKeys[gap.key]) return;
-      uncovered.push(uncoveredNote(state, gap));
+      var picks = foodsFor(state, gap);
+
+      // 채울 음식이 없으면 부정확한 제안을 하느니 사실만 알린다
+      if (!picks.length) {
+        uncovered.push(uncoveredNote(state, gap));
+        return;
+      }
+
+      var names = picks.map(function (card) { return plain(card.name); });
+      lines.push({
+        key: gap.key,
+        name: gap.name,
+        foods: picks,
+        message: withParticle(gap.name, '은', '는') + ' ' +
+          withRo(names.join(', ')) + ' 보충할 수 있어.'
+      });
     });
+
+    var headline = '이번 주엔 ' + withParticle(
+      joinNutrients(gapList.map(function (g) { return g.name; })), '이', '가') + ' 부족하네.';
 
     return {
       show: true,
       kind: 'suggest',
       loggedDays: report.loggedDays,
       gaps: gapList,
+      headline: headline,
+      lines: lines,
       overs: overList,
-      foods: foodCards,
       notes: supplementNotes(state, gapList),
       uncovered: uncovered
     };
@@ -4491,6 +4503,7 @@ window.FitLog = window.FitLog || {};
   FitLog.suggest = {
     COVER_RATIO: COVER_RATIO,
     TOP_GAPS: TOP_GAPS,
+    PER_NUTRIENT: PER_NUTRIENT,
     MAX_CARDS: MAX_CARDS,
     HIGH_KCAL: HIGH_KCAL,
     MIN_DAYS: MIN_DAYS,
@@ -4499,6 +4512,9 @@ window.FitLog = window.FitLog || {};
     plain: plain,
     hasJong: hasJong,
     withParticle: withParticle,
+    withRo: withRo,
+    joinNutrients: joinNutrients,
+    foodsFor: foodsFor,
     gaps: gaps,
     overs: overs,
     candidates: candidates,
@@ -6769,19 +6785,12 @@ window.FitLog = window.FitLog || {};
       card.appendChild(el('p', { class: 'alert alert-tip', text: note.message }));
     });
 
-    if (plan.foods.length) {
-      // '이번 주' 를 밝힌다. 최근 7일을 본 판정이라 안 밝히면 방금 생긴 일처럼 읽힌다.
-      var gapNames = plan.gaps.map(function (g) {
-        return FitLog.suggest.plain(g.name);
-      }).join(' · ');
-      card.appendChild(el('p', { class: 'field-hint',
-        text: '이번 주 ' + FitLog.suggest.withParticle(gapNames, '이', '가') +
-              ' 모자랐어. 1회 섭취량 기준이야.' }));
+    // '이번 주' 를 밝힌다. 최근 7일을 본 판정이라 안 밝히면 방금 생긴 일처럼 읽힌다.
+    card.appendChild(el('p', { class: 'suggest-headline', text: plan.headline }));
 
-      var list = el('div', { class: 'suggest-list' });
-      plan.foods.forEach(function (item) { list.appendChild(suggestRow(item)); });
-      card.appendChild(list);
-    }
+    plan.lines.forEach(function (line) {
+      card.appendChild(el('p', { class: 'suggest-line', text: line.message }));
+    });
 
     // 커버할 음식이 없는 것 — 부정확한 제안을 하느니 사실만 알린다
     plan.uncovered.forEach(function (note) {
@@ -6794,54 +6803,6 @@ window.FitLog = window.FitLog || {};
     });
 
     return card;
-  }
-
-  function suggestRow(item) {
-    var covers = item.covers.map(function (c) {
-      return FitLog.suggest.plain(c.name);
-    }).join(' · ');
-
-    var fav = el('button', {
-      type: 'button', class: 'btn btn-ghost suggest-btn',
-      text: store.isFavorite('food', item.id) ? '즐겨찾기 됨' : '즐겨찾기 추가'
-    });
-    // 목록 안의 버튼은 자기 상태만 갱신한다. 전체를 다시 그리면 스크롤이 튄다.
-    fav.addEventListener('click', function () {
-      var on = store.toggleFavorite('food', item.id);
-      fav.textContent = on ? '즐겨찾기 됨' : '즐겨찾기 추가';
-      ui.toast(on ? '즐겨찾기에 넣었어' : '즐겨찾기에서 뺐어');
-    });
-
-    var log = el('button', {
-      type: 'button', class: 'btn btn-primary suggest-btn', text: '오늘 기록'
-    });
-    log.addEventListener('click', function () {
-      var food = FitLog.foods.get(item.id);
-      store.addMeal(store.todayKey(), {
-        type: 'snack',
-        sourceKind: 'food',
-        sourceId: item.id,
-        label: food.name,
-        portion: 1,
-        items: null,
-        nutrients: FitLog.foods.round(
-          FitLog.foods.scale(item.id, item.serving.amount))
-      });
-      ui.toast(food.name + ' 기록했어');
-      // 판정을 다시 계산해야 한다 — 방금 넣은 게 반영된 화면을 봐야 한다
-      FitLog.router.render();
-    });
-
-    return el('div', { class: 'suggest-item' }, [
-      el('div', { class: 'suggest-head' }, [
-        el('span', { class: 'suggest-name', text: item.name }),
-        el('span', { class: 'suggest-serving',
-          text: item.serving.label + ' (' + item.serving.amount + item.serving.unit + ')' })
-      ]),
-      el('div', { class: 'suggest-meta', text: item.kcal + 'kcal' }),
-      el('div', { class: 'suggest-covers', text: covers + ' 채움' }),
-      el('div', { class: 'suggest-actions' }, [fav, log])
-    ]);
   }
 
   /* 체중·허리둘레 라인 차트 */
@@ -7745,7 +7706,7 @@ window.FitLog = window.FitLog || {};
   var DEFAULT_TAB = 'today';
 
   // 빌드를 구분하는 표식. 폰이 캐시된 옛 버전을 잡고 있는지 설정 탭에서 확인할 수 있다.
-  var BUILD = '2026-08-30.16';
+  var BUILD = '2026-08-30.17';
 
   /* ---------- 에러 표시 ----------
      조용히 멈추는 게 가장 나쁘다. 잡히지 않은 예외를 화면에 띄워
