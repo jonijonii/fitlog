@@ -1220,6 +1220,52 @@ window.FitLog = window.FitLog || {};
     ok('1회량 250kcal 초과 음식이 있다 — 하나도 없으면 loseFat 강등이 죽는다',
       heavyReal.length > 0, heavyReal.length + '개');
 
+    /* ---- 흔한 음식이 먼저 ----
+     * 함량만으로 줄 세우면 건새우·해삼·분유처럼 '효율은 좋지만 안 먹는' 것이 위를 먹는다.
+     * 사용자 피드백: "예로 든 음식들이 내가 잘 먹는 음식들이 아니야."
+     * 빼지는 않는다 — 흔한 것으로 자리가 안 차면 뒤에 붙는다.
+     */
+    var potGap = { key: 'potassium', name: '칼륨', unit: 'mg' };
+
+    function fakeCommon(id, name, pct, isCommon) {
+      var food = fake(id, name, 50, { potassium: 3500 * pct }, 100);
+      food.common = isCommon;
+      return food;
+    }
+
+    var commonPool = [
+      fakeCommon('f_rare', '안흔한데함량높음', 0.9, false),
+      fakeCommon('f_usual', '흔한데함량낮음', 0.2, true)
+    ];
+    var byCommon = suggest.foodsFor(sState, potGap, { foods: commonPool });
+    eq('흔한 음식이 먼저 온다', byCommon[0].id, 'f_usual');
+    eq('안 흔한 것도 빠지지는 않는다', byCommon[1].id, 'f_rare');
+    ok('흔한지 여부를 카드에 담는다',
+      byCommon[0].common === true && byCommon[1].common === false);
+
+    // 흔한 것끼리는 함량이 높은 순
+    var tie = suggest.foodsFor(sState, potGap, { foods: [
+      fakeCommon('f_low', '낮음', 0.2, true),
+      fakeCommon('f_high', '높음', 0.8, true)
+    ] });
+    eq('흔한 것끼리는 함량 순', tie[0].id, 'f_high');
+
+    eq('영양소당 10개까지 댄다', suggest.PER_NUTRIENT, 10);
+
+    // 실제 DB — 흔한 음식 표시가 붙어 있고, 목록 앞쪽이 흔한 것으로 채워지는지
+    ok('음식 DB 에 흔한지 여부가 붙어 있다',
+      foods.get('milk').common === true && foods.get('sea_cucumber').common === false);
+    ok('밥·고구마 같은 주식도 1회량이 있다',
+      !!foods.get('rice_cooked').typicalServing &&
+      !!foods.get('sweet_potato').typicalServing);
+
+    var realCalcium = suggest.foodsFor(sState, { key: 'calcium', name: '칼슘', unit: 'mg' });
+    ok('칼슘 목록 앞쪽은 흔한 음식이다',
+      realCalcium.slice(0, 5).every(function (c) { return c.common; }),
+      realCalcium.slice(0, 5).map(function (c) { return c.name; }).join(', '));
+    ok('우유가 칼슘 목록에 있다',
+      realCalcium.some(function (c) { return c.id === 'milk'; }));
+
     /* ---- ③ 목표별 분기 ----
      * goals 는 배열이다 — goal === 'loseFat' 같은 단일 비교를 쓰면 리컴프에서 샌다.
      */

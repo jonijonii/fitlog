@@ -30,7 +30,11 @@ window.FitLog = window.FitLog || {};
   var COVER_RATIO = 0.15;
 
   var TOP_GAPS = 3;      // 부족 영양소는 상위 3개만 본다
-  var PER_NUTRIENT = 3;  // 영양소 하나에 음식 3개까지 이름을 댄다
+  /* 영양소 하나에 음식 10개까지 이름을 댄다.
+   * 3개였을 때 "예로 든 음식들이 내가 잘 먹는 게 아니야" 는 피드백을 받았다.
+   * 함량 순으로 3개만 고르면 내가 '효율 좋은 음식' 을 골라 주는 셈이라,
+   * 사용자가 자기 식단에서 고를 여지가 없다. 여러 개를 늘어놓고 고르게 한다. */
+  var PER_NUTRIENT = 10;
   var MAX_CARDS = 6;     // candidates() 기본 상한
   var HIGH_KCAL = 250;   // loseFat 일 때 이 위는 하단으로 (제외하지는 않는다)
   var MIN_DAYS = 3;      // 주간 기록이 이보다 적으면 판정 신뢰도가 낮다
@@ -257,6 +261,7 @@ window.FitLog = window.FitLog || {};
         covers: covers,
         coverCount: covers.length,
         avgDensity: densitySum / covers.length,
+        common: food.common !== false,
         heavy: loseFat && kcal > HIGH_KCAL
       });
     });
@@ -282,8 +287,11 @@ window.FitLog = window.FitLog || {};
   /**
    * 한 영양소를 채울 음식을 고른다.
    *
-   * 순서는 **1회 섭취량이 하루 필요량의 몇 %를 채우느냐** 다.
-   * '한 번 먹으면 얼마나 채워지나' 가 이 화면에서 알고 싶은 것이라서다.
+   * **1차는 흔한 음식이냐다.** 함량만으로 줄 세우면 건새우·해삼·분유처럼
+   * '효율은 좋지만 실제로 안 먹는' 것이 위를 차지한다. 그러면 제안이 쓸모없어진다.
+   * 안 흔한 것을 빼지는 않는다 — 흔한 것으로 자리가 안 차면 뒤에 붙는다.
+   *
+   * 2차는 1회 섭취량이 하루 필요량의 몇 %를 채우느냐다.
    * (여러 영양소를 한꺼번에 보던 때는 커버 개수가 1차였는데, 영양소별로 나눠 보면
    *  개수가 전부 1이라 의미가 없다.)
    */
@@ -294,6 +302,7 @@ window.FitLog = window.FitLog || {};
     var ranked = candidates(state, [gap], { limit: 0, foods: o.foods });
     ranked.sort(function (a, b) {
       if (a.heavy !== b.heavy) return a.heavy ? 1 : -1;   // 감량 중이면 무거운 건 뒤로
+      if (a.common !== b.common) return a.common ? -1 : 1;
       return b.covers[0].pct - a.covers[0].pct;
     });
 

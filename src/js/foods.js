@@ -577,6 +577,50 @@ window.FitLog = window.FitLog || {};
     sunflower_seed:    [ 20, 'g', '1줌'],
     pumpkin_seed:      [ 20, 'g', '1줌'],
 
+    /* ---------- 밥·빵·면 ----------
+     * 가장 흔하게 먹는 것들이라 제안에서 빠지면 안 된다.
+     * 식이섬유·칼륨 목록이 비어 보였던 게 이게 없어서였다. */
+    rice_cooked:       [210, 'g', '1공기'],      // 1인분 표 (공기밥)
+    rice_brown:        [210, 'g', '1공기'],      // 1인분 표
+    rice_multigrain:   [210, 'g', '1공기'],      // 1인분 표
+    rice_black:        [210, 'g', '1공기'],      // 1인분 표
+    porridge_rice:     [300, 'g', '1그릇'],
+    porridge_abalone:  [300, 'g', '1그릇'],
+    porridge_pumpkin:  [300, 'g', '1그릇'],
+    bread_white:       [ 35, 'g', '1장'],
+    bread_whole:       [ 35, 'g', '1장'],
+    baguette:          [ 60, 'g', '2조각'],
+    croissant:         [ 60, 'g', '1개'],
+    bagel:             [ 90, 'g', '1개'],
+    tortilla:          [ 50, 'g', '1장'],
+    bread_red_bean:    [ 80, 'g', '1개'],
+    bread_cream:       [ 80, 'g', '1개'],
+    muffin:            [ 70, 'g', '1개'],
+    pancake:           [100, 'g', '2장'],
+    bun_burger:        [ 60, 'g', '1개'],
+    bun_soft:          [ 40, 'g', '1개'],
+    pizza_dough:       [100, 'g', '1인분'],
+    mandu_skin:        [ 30, 'g', '5장'],
+    noodle_wheat:      [200, 'g', '1인분'],      // 1인분 표 (면류, 삶은 것)
+    noodle_ramen:      [200, 'g', '1인분'],      // 1인분 표
+    noodle_udon:       [200, 'g', '1인분'],      // 1인분 표
+    noodle_soba:       [200, 'g', '1인분'],      // 1인분 표
+    noodle_glass:      [200, 'g', '1인분'],      // 1인분 표
+    noodle_rice:       [200, 'g', '1인분'],      // 1인분 표
+    pasta_cooked:      [200, 'g', '1인분'],      // 1인분 표
+    jjolmyeon_noodle:  [200, 'g', '1인분'],      // 1인분 표
+    naengmyeon_noodle: [200, 'g', '1인분'],      // 1인분 표
+    tteok:             [100, 'g', '1인분'],
+    tteokbokki_tteok:  [150, 'g', '1인분'],
+    sweet_potato:      [150, 'g', '1개'],
+    potato:            [150, 'g', '1개'],
+    pumpkin_steamed:   [150, 'g', '1접시'],
+    corn_boiled:       [100, 'g', '1개'],
+    cereal_corn:       [ 40, 'g', '1그릇'],
+    granola:           [ 50, 'g', '1그릇'],
+    oatmeal_cooked:    [250, 'g', '1그릇'],
+    french_fries:      [100, 'g', '1인분'],
+
     /* ---------- 어패류 ----------
      * 미량영양소 추천의 주력이다. 굴·멸치는 한 접시로 철·아연·B12·오메가3 를 한꺼번에 채우고,
      * 오메가3·비타민D·B12 는 여기가 없으면 '음식으로 채우기 어렵다' 로만 끝난다. */
@@ -660,6 +704,57 @@ window.FitLog = window.FitLog || {};
      * 값을 확인해 고친 뒤에 여기에 1회량을 넣으면 다시 추천에 들어온다. */
   };
 
+  /* ---------- 흔한 음식인가 (uncommon) ----------
+   *
+   * 음식 제안은 **흔하게 먹고 쉽게 구할 수 있는 것 위주** 로 보여준다.
+   * 영양소 함량만으로 줄 세우면 건새우·해삼·분유처럼 '효율은 좋지만 안 먹는' 것이
+   * 위를 차지한다. 실제로 그래서 제안이 쓸모없다는 피드백을 받았다.
+   *
+   * 흔한 정도는 데이터로 알 수 없다. 템플릿 사용 횟수를 신호로 써 봤는데
+   * 칼슘 음식 16개 중 4개만 템플릿에 있었다 — 템플릿을 어떻게 썼느냐가 반영될 뿐이다.
+   * 그래서 손으로 정한다.
+   *
+   * **여기 적은 것이 '안 흔한 것' 이다.** 1회 섭취량이 있는데 여기 없으면 흔한 것으로 본다.
+   * 목록을 뒤집어 적는 이유는 이쪽이 짧아서 사람이 검수하기 쉽기 때문이다.
+   *
+   * 기준 — 아래에 하나라도 걸리면 안 흔한 것:
+   *   · 마트에서 늘 사는 물건이 아니다 (해삼·전복·건새우·분유)
+   *   · 명절·특식으로만 먹는다 (도라지·고사리·장어·오리)
+   *   · 그 자체로 먹는 게 아니라 양념·재료다 (마늘·생강·참깨·만두피·피자도우)
+   * 제안에서 아예 빼는 게 아니라 **뒤로 밀린다.** 흔한 것으로 자리가 안 차면 나온다.
+   */
+  var UNCOMMON = [
+    // 밥·빵·면 — 조리 재료거나 특식
+    'porridge_abalone', 'tortilla', 'pizza_dough', 'mandu_skin',
+
+    // 채소 — 양념이거나 명절·특식
+    'red_pepper_powder', 'garlic', 'ginger', 'green_onion',
+    'dried_radish', 'balloon_flower', 'bracken', 'chwinamul', 'crown_daisy',
+    'beet', 'yam',
+
+    // 과일 — 제철에만 잠깐이거나 덜 사 먹는 것
+    'fig', 'pomegranate', 'jujube_fresh', 'jujube_dried', 'prune',
+
+    // 유제품 — 가정에서 그대로 먹지 않는 것
+    'milk_powder', 'condensed_milk', 'parmesan', 'cream_whipping',
+
+    // 콩·견과 — 양념이거나 덜 흔한 것
+    'sesame_seed', 'perilla_seed', 'pine_nut', 'kongbiji', 'mung_bean',
+    'ginkgo', 'macadamia',
+
+    // 어패류 — 양념·안주·특식·고가
+    'shrimp_dried', 'jeotgal_shrimp', 'dashima_dried', 'squid_dried',
+    'sardine_canned', 'fish_roe_flying', 'sea_cucumber', 'abalone',
+    'eel_grilled', 'pollack_dried',
+
+    // 육류 — 특수 부위나 덜 먹는 고기
+    'beef_tripe', 'beef_jerky', 'chicken_skin', 'chicken_gizzard',
+    'duck_roast', 'lamb'
+  ];
+
+  var UNCOMMON_SET = {};
+  UNCOMMON.forEach(function (id) { UNCOMMON_SET[id] = true; });
+
   /* ---------- 조회 헬퍼 ---------- */
 
   var LIST = [];
@@ -679,6 +774,9 @@ window.FitLog = window.FitLog || {};
         // 1회 섭취량은 채운 항목에만 붙는다. 없으면 필드 자체가 없다 (추천에서 제외된다)
         var srv = SERVING[food.id];
         if (srv) food.typicalServing = { amount: srv[0], unit: srv[1], label: srv[2] };
+
+        // 흔한 음식인가 — 제안 순서에 쓴다. 안 흔한 것만 따로 적어 두고 나머지는 흔한 것으로 본다
+        food.common = !UNCOMMON_SET[food.id];
 
         LIST.push(food);
         BY_ID[food.id] = food;
