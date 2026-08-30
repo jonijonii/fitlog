@@ -340,6 +340,92 @@ window.FitLog = window.FitLog || {};
     ok('칼로리가 매크로 합과 맞는다', badKcal.length === 0,
       badKcal.slice(0, 5).join(', ') + (badKcal.length > 5 ? ' 외 ' + (badKcal.length - 5) + '건' : ''));
 
+    /* ---- 영양소 '정의' 규약 ----
+     * 숫자가 맞아도 정의가 다르면 판정이 거짓말을 한다.
+     * omega3 칸에 식물성 ALA 가 들어가면, EPA+DHA 를 하나도 안 먹은 날에도
+     * 오메가3가 '적정'으로 뜬다. 부족한 걸 부족하지 않다고 하는 쪽이 더 나쁘다.
+     */
+    var alaFoods = ['walnut', 'perilla_seed', 'perilla_oil', 'canola_oil', 'olive_oil',
+                    'sesame_oil', 'tofu_firm', 'soybean_boiled', 'black_bean', 'natto',
+                    'flaxseed', 'chia_seed', 'mayonnaise', 'spinach', 'kale', 'avocado'];
+    var alaLeak = [];
+    alaFoods.forEach(function (id) {
+      var f = foods.get(id);
+      if (f && f.per100g.omega3 > 0) alaLeak.push(f.name + '=' + f.per100g.omega3);
+    });
+    ok('식물성 ALA 급원의 omega3 는 0 이다 (omega3 = EPA+DHA)',
+      alaLeak.length === 0, alaLeak.join(', '));
+
+    /* 육류·유제품·계란의 오메가3도 ALA 나 조리유 유래라 EPA+DHA 가 아니다.
+     * 이걸 남겨 두면 생선 없이도 목표가 채워진다 — 정정 전 실제로 그랬다. */
+    var animalLeak = [];
+    ['beef_sirloin', 'pork_belly', 'chicken_breast', 'bacon', 'sausage',
+     'milk', 'cheese_slice', 'cheddar', 'butter', 'egg_boiled', 'egg_yolk',
+     'greek_yogurt', 'ice_cream'].forEach(function (id) {
+      var f = foods.get(id);
+      if (f && f.per100g.omega3 > 0) animalLeak.push(f.name + '=' + f.per100g.omega3);
+    });
+    ok('육류·유제품·계란의 omega3 도 0 이다', animalLeak.length === 0, animalLeak.join(', '));
+
+    // 생선을 한 점도 안 먹은 하루는 EPA+DHA 가 0 이어야 한다.
+    // 정정 전에는 이 조합이 486mg(목표 300mg 의 162%)으로 잡혀 🟢 적정으로 떴다.
+    var noFishDay = foods.sum([
+      foods.scale('egg_boiled', 110), foods.scale('cheese_slice', 18),
+      foods.scale('pork_belly', 150), foods.scale('milk', 200)
+    ]);
+    eq('생선 없는 하루의 omega3 는 0', noFishDay.omega3, 0);
+
+    // 조리 음식은 재료에 생선·해조가 들어간 것만 남긴다
+    var dishLeak = [];
+    ['japchae', 'tteokbokki', 'jjajang_sauce', 'hamburger', 'cream_pasta',
+     'samgyetang', 'sweet_sour_pork'].forEach(function (id) {
+      var f = foods.get(id);
+      if (f && f.per100g.omega3 > 0) dishLeak.push(f.name + '=' + f.per100g.omega3);
+    });
+    ok('생선 안 든 조리 음식의 omega3 는 0', dishLeak.length === 0, dishLeak.join(', '));
+    ok('초밥은 omega3 를 유지한다', foods.get('sushi_piece').per100g.omega3 > 0);
+    ok('미역국도 유지한다', foods.get('miyeokguk').per100g.omega3 > 0);
+
+    // 호두 30g 을 먹어도 EPA+DHA 는 늘지 않는다 — 위 규약이 합산까지 지켜지는지
+    eq('호두 30g 의 omega3 합계는 0', foods.scale('walnut', 30).omega3, 0);
+    eq('호두 30g + 들깨 5g 도 0',
+      foods.sum([foods.scale('walnut', 30), foods.scale('perilla_seed', 5)]).omega3, 0);
+
+    // 등푸른생선은 진짜 EPA+DHA 라 그대로 남아 있어야 한다 (과잉 정정 방지)
+    ok('고등어는 omega3 를 유지한다', foods.get('mackerel').per100g.omega3 > 1000);
+    ok('연어도 유지한다', foods.get('salmon_grilled').per100g.omega3 > 1000);
+    ok('구이 120g 이면 하루 권장 300mg 을 넘는다',
+      foods.scale('mackerel', 120).omega3 > 300);
+
+    /* 비타민A·엽산·철도 '정의가 다른 값' 이 섞일 수 있는 자리다.
+     * 다만 이 셋은 단위 자체가 이미 환산된 통합 단위라 omega3 같은 문제가 없다.
+     * 단위를 바꾸면 그 순간 판정이 어긋나므로 여기에 못 박아 둔다. */
+    eq('비타민A 는 RAE — 레티놀과 베타카로틴을 이미 환산한 단위',
+      nutrition.NUTRIENT_MAP.vitaminA.unit, 'µg RAE');
+    eq('엽산은 DFE — 식품엽산과 합성엽산을 이미 환산한 단위',
+      nutrition.NUTRIENT_MAP.folate.unit, 'µg DFE');
+    eq('엽산 상한은 합성엽산(보충제)에만 적용된다',
+      nutrition.NUTRIENT_MAP.folate.ulSource, 'supplement');
+    eq('철은 헴/비헴을 나누지 않는다 — 권장량이 혼합식 기준이라 상한은 총량으로 본다',
+      nutrition.NUTRIENT_MAP.iron.ulSource, 'all');
+
+    /* ---- 1회 섭취량(typicalServing) ---- */
+    var served = list.filter(function (f) { return f.typicalServing; });
+    ok('typicalServing 을 채운 음식이 있다', served.length > 100, '채움 ' + served.length + '개');
+
+    var badServing = served.filter(function (f) {
+      var s = f.typicalServing;
+      return !(s.amount > 0) || !s.unit || !s.label;
+    });
+    ok('1회 섭취량은 amount·unit·label 을 모두 갖는다', badServing.length === 0,
+      badServing.slice(0, 3).map(function (f) { return f.name; }).join(', '));
+
+    // 추천은 typicalServing 이 있는 음식만 대상으로 한다. 없으면 후보에서 빠져야 한다.
+    ok('값이 의심스러워 보류한 음식은 1회량이 없다',
+      !foods.get('seasoned_gim').typicalServing &&
+      !foods.get('gim_dried').typicalServing &&
+      !foods.get('miyeok_dried').typicalServing);
+
     /* ---- 음식 조회·계산 헬퍼 ---- */
     var rice = foods.get('rice_cooked');
     ok('id 로 음식을 찾는다', rice && rice.name === '밥 (백미)');
@@ -907,8 +993,87 @@ window.FitLog = window.FitLog || {};
     ok('오늘 값과 주간 평균은 다른 계산이다',
       typeof weekAvg.value === 'number' && typeof trKcal.value === 'number');
 
-    ok('식사 기록이 없어도 보충제는 합산된다',
+    ok('식사 기록이 없는 날도 리포트는 나온다',
       judge.todayReport(dummy, '2020-01-01').items.length === 14);
+
+    /* ---- 보충제는 '그날 체크한 것' 만 합산한다 ----
+     * 등록만 하면 계산에 들어가던 때는, 오메가3 보충제를 등록한 사람에게
+     * 오메가3 부족이 구조적으로 뜰 수 없었다 — 깜빡한 날도 먹은 걸로 쳤다.
+     * 아래는 그 회귀를 막는 테스트다. 이 동작을 되돌리면 여기서 깨진다.
+     */
+    var takenSnapshot = JSON.parse(JSON.stringify(store.load()));
+    store.reset();
+    store.update(function (s) {
+      s.profile = {
+        height: 165, age: 40, sex: 'female', weight: 60,
+        goals: ['maintain'], weeklyPlan: { strength: 2, cardio: 2 },
+        createdAt: '2026-08-11'
+      };
+      s.targets = calc.computeTargets(s.profile);
+      s.supplements = [
+        { id: 'sup_o3', name: '오메가3', presetId: 'omega3', timeSlot: 'lunch',
+          dailyDoses: 1, nutrients: { omega3: 1000 }, enabled: true },
+        { id: 'sup_d', name: '비타민D', presetId: 'vitamin_d', timeSlot: 'lunch',
+          dailyDoses: 1, nutrients: { vitaminD: 25 }, enabled: true }
+      ];
+      return s;
+    });
+
+    var tDays = judge.lastDays(END, 7);
+    tDays.forEach(function (dayKey, i) {
+      store.addMeal(dayKey, {
+        type: 'lunch', sourceKind: 'food', sourceId: 'rice_cooked', label: '밥',
+        portion: 1, nutrients: foods.scale('rice_cooked', 210)
+      });
+    });
+
+    function micro(dateKey, key) {
+      var rows = judge.todayReport(store.load(), dateKey).items;
+      return rows.filter(function (i) { return i.key === key; })[0];
+    }
+
+    eq('체크 안 한 보충제는 안 세어진다', micro(END, 'omega3').value, 0);
+    eq('부족으로 잡힌다', micro(END, 'omega3').level.key, 'low');
+
+    store.toggleTaken(END, 'sup_o3');
+    eq('체크하면 합산된다', micro(END, 'omega3').value, 1000);
+    eq('체크한 것만 센다 — 비타민D 는 아직 0', micro(END, 'vitaminD').value, 0);
+    eq('보충제 유래분에도 반영된다', micro(END, 'omega3').fromSupplement, 1000);
+
+    store.toggleTaken(END, 'sup_d');
+    eq('둘 다 체크하면 둘 다 센다', micro(END, 'vitaminD').value, 25);
+
+    store.toggleTaken(END, 'sup_o3');
+    eq('체크를 해제하면 다시 빠진다', micro(END, 'omega3').value, 0);
+    eq('해제해도 다른 보충제는 그대로', micro(END, 'vitaminD').value, 25);
+
+    // 주간 평균도 날짜별 체크를 본다. 하루분을 그대로 더하면
+    // 한 번도 안 먹은 주에도 매일 먹은 것으로 잡힌다.
+    function weekOmega3() {
+      return judge.nutritionReport(store.load(), END, 7)
+        .items.filter(function (i) { return i.key === 'omega3'; })[0];
+    }
+    store.toggleTaken(END, 'sup_d');   // 앞에서 켠 것을 되돌린다
+    eq('아무 날도 체크 안 하면 주간 평균 0', weekOmega3().value, 0);
+
+    [0, 1, 2].forEach(function (i) { store.toggleTaken(tDays[i], 'sup_o3'); });
+    near('7일 중 3일 체크 → 평균은 3/7', weekOmega3().value, 1000 * 3 / 7, 0.2);
+
+    [3, 4, 5, 6].forEach(function (i) { store.toggleTaken(tDays[i], 'sup_o3'); });
+    eq('7일 전부 체크 → 하루분 그대로', weekOmega3().value, 1000);
+
+    // CSV 도 같은 기준이어야 앱 화면과 숫자가 어긋나지 않는다
+    store.toggleTaken(END, 'sup_d');
+    var csvTaken = FitLog.csv.dailySummary(store.load());
+    ok('CSV 일별 요약도 체크 기준으로 계산된다', csvTaken.indexOf(END) >= 0);
+
+    // 날짜 없이 부르면 예전처럼 등록된 것 전부를 센다 (설정 탭 미리보기용)
+    eq('takenIds 를 안 넘기면 등록분 전부를 센다',
+      sup.dailyNutrients(store.load().supplements).omega3, 1000);
+    eq('빈 배열을 넘기면 0 이다',
+      sup.dailyNutrients(store.load().supplements, []).omega3, 0);
+
+    store.replace(takenSnapshot);
 
     /* 총량을 말할 때 하루 필요량 대비를 항상 같이 말한다 */
     var naItem = tr.items.filter(function (i) { return i.key === 'sodium'; })[0];

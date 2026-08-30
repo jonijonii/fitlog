@@ -203,6 +203,177 @@ if (es5Problems.length) {
   console.log('[FitLog] ES5 검사 통과 — 검사한 파일 ' + ALL_FILES.length + '개');
 }
 
+/* ---------- 영양 데이터 sanity 검사 (Phase 7 ①) ----------
+ * typicalServing 을 채운 음식을 훑어 '그럴듯하게 틀린 숫자'를 찾는다.
+ *
+ * 이건 테스트 실패가 아니라 '확인 필요' 목록이다 — 빌드를 막지 않는다.
+ * 걸린 값을 임의로 고치지 말고 사람이 보고 판단할 것.
+ * (영양 데이터는 애초에 추정치라, 자동으로 참/거짓을 가릴 수 있는 종류가 아니다.)
+ */
+
+const foodsApi = sandbox.window.FitLog.foods;
+const allFoods = foodsApi.all();
+const servedFoods = allFoods.filter((f) => f.typicalServing);
+const sanityNotes = [];
+
+/* (1) 1회 섭취량이 상식적인가.
+ * 그룹마다 한 번에 먹는 양의 폭이 다르다 (양념 몇 g ~ 과일 한 개 300g).
+ * 아래 범위는 '정답'이 아니라 '이 밖이면 사람이 다시 봐야 한다' 는 경계다.
+ * 잡으려는 것: 바나나 500g, 김 100g 같은 항목.
+ */
+const SERVING_RANGE = {
+  grain:      [20, 300],
+  meat:       [20, 250],
+  seafood:    [2, 250],    // 마른 김 2g ~ 생선구이 200g 까지 한 그룹에 있다
+  vegetable:  [3, 200],
+  fruit:      [10, 300],
+  dairy:      [5, 250],
+  legume_nut: [3, 200],
+  seasoning:  [1, 50],
+  dish:       [30, 400]
+};
+const SERVING_KCAL = [3, 400];   // 한 항목이 한 끼 수준(400kcal)을 넘으면 1회분이 아니다
+
+servedFoods.forEach((food) => {
+  const srv = food.typicalServing;
+  const range = SERVING_RANGE[food.group];
+  const kcal = food.per100g.kcal * srv.amount / 100;
+
+  if (range && (srv.amount < range[0] || srv.amount > range[1])) {
+    sanityNotes.push(`[1회량] ${food.name}(${food.id}) ${srv.amount}${srv.unit} — `
+      + `${food.group} 그룹 상식 범위 ${range[0]}~${range[1]}g 밖`);
+  }
+  if (kcal < SERVING_KCAL[0] || kcal > SERVING_KCAL[1]) {
+    sanityNotes.push(`[1회량] ${food.name}(${food.id}) ${srv.amount}${srv.unit} = `
+      + `${Math.round(kcal)}kcal — 1회분 열량 ${SERVING_KCAL[0]}~${SERVING_KCAL[1]}kcal 밖`);
+  }
+
+  // 말린 것은 부피가 크고 가벼워서 한 번에 많이 못 먹는다. 김 100g(50장쯤) 같은 값을 잡는다.
+  // 그램 범위만으로는 안 걸린다 — 김 100g 은 180kcal 이라 열량 검사도 통과한다.
+  if (food.per100g.fiber >= 15 && srv.amount > 30) {
+    sanityNotes.push(`[1회량] ${food.name}(${food.id}) ${srv.amount}${srv.unit} — `
+      + `말린 식품(식이섬유 ${food.per100g.fiber}g/100g)치고 양이 많다`);
+  }
+});
+
+/* (2) 100g당 열량이 매크로 합산과 맞는가.
+ * kcal ≈ 탄수×4 + 단백질×4 + 지방×9. ±20% 이상 어긋나면 입력 실수를 의심한다.
+ * 절대 차이가 15kcal 미만이면 넘긴다 — 저열량 채소는 조금만 틀려도 %가 크게 튄다.
+ *
+ * 식이섬유는 탄수에 포함돼 있는데 열량은 거의 안 낸다. 그래서 김·미역처럼 섬유가 많은
+ * 항목은 이 식으로는 늘 어긋난다. 목록에서 빼지 않고 '섬유 빼면 맞음' 이라고 적어 둔다 —
+ * 조용히 넘기면 진짜 입력 실수가 같은 이유로 묻힌다.
+ */
+servedFoods.forEach((food) => {
+  const p = food.per100g;
+  const macroKcal = p.carbs * 4 + p.protein * 4 + p.fat * 9;
+  const diff = macroKcal - p.kcal;
+
+  if (Math.abs(diff) < 15) return;
+  if (p.kcal > 0 && Math.abs(diff) / p.kcal < 0.2) return;
+
+  // 식이섬유를 열량 없는 탄수로 보면 오차가 사라지는지
+  const netKcal = (p.carbs - p.fiber) * 4 + p.protein * 4 + p.fat * 9;
+  const explained = p.kcal > 0 && Math.abs(netKcal - p.kcal) / p.kcal < 0.2;
+
+  sanityNotes.push(`[열량] ${food.name}(${food.id}) 표기 ${p.kcal}kcal / `
+    + `매크로 합산 ${Math.round(macroKcal)}kcal (${diff > 0 ? '+' : ''}${Math.round(diff)})`
+    + (explained ? ` — 식이섬유 ${p.fiber}g 빼면 ${Math.round(netKcal)}kcal 로 맞음` : ''));
+});
+
+/* (3) 어떤 영양소가 같은 식품군 평균의 5배를 넘는가.
+ * 평균은 그룹 전체(typicalServing 없는 것 포함)로 낸다 — 표본이 클수록 튀는 값이 드러난다.
+ * 진짜로 높은 항목(호두의 오메가3 등)도 걸리지만, 자릿수 실수도 여기서 걸린다.
+ *
+ * 단, '평균의 5배'만 보면 버섯 비타민D 0.2µg(그룹 평균 0.0) 같은 것까지 걸린다.
+ * 배수는 커도 몸에 들어오는 양은 없는 것이나 마찬가지라 목록만 길어진다.
+ * 그래서 실효성 문턱을 같이 둔다 — 1회 섭취량 기준으로 의미 있는 양일 때만 적는다.
+ */
+
+// 미량영양소는 하루 권장량의 5% 이상을 실제로 공급할 때만 본다.
+// 기준 프로필은 검사용 성인값이다 (특정 사람의 수치가 아니다).
+const REF_DRI = sandbox.window.FitLog.nutrition.microTargets({ sex: 'female', age: 35 });
+
+// 매크로는 권장량 표가 없어서 절대량으로 문턱을 둔다 (100g 기준).
+const MACRO_FLOOR = { kcal: 150, protein: 5, carbs: 15, fat: 5, fiber: 2 };
+
+function isMaterial(key, per100gValue, servingGrams) {
+  if (MACRO_FLOOR[key] !== undefined) return per100gValue >= MACRO_FLOOR[key];
+  const dri = REF_DRI[key];
+  if (!dri) return true;                       // 권장량이 없는 영양소는 그대로 본다
+  return (per100gValue * servingGrams / 100) >= dri * 0.05;
+}
+const groupMean = {};
+allFoods.forEach((food) => {
+  const g = groupMean[food.group] || (groupMean[food.group] = { n: 0, sum: {} });
+  g.n += 1;
+  foodsApi.KEYS.forEach((key) => {
+    g.sum[key] = (g.sum[key] || 0) + (Number(food.per100g[key]) || 0);
+  });
+});
+
+servedFoods.forEach((food) => {
+  const g = groupMean[food.group];
+  const spikes = [];
+
+  foodsApi.KEYS.forEach((key) => {
+    const mean = g.sum[key] / g.n;
+    const value = Number(food.per100g[key]) || 0;
+    if (mean <= 0 || value <= 0) return;
+    if (value <= mean * 5) return;
+    if (!isMaterial(key, value, food.typicalServing.amount)) return;
+    spikes.push(`${key} ${value}(평균 ${mean.toFixed(1)})`);
+  });
+
+  if (spikes.length) {
+    sanityNotes.push(`[돌출] ${food.name}(${food.id}) — ` + spikes.join(', '));
+  }
+});
+
+/* (4) CLAUDE.md '양 조절' 절의 1인분 표와 어긋나는가.
+ * 표에 값이 있는 항목은 표를 따라야 한다. 표를 고쳤으면 여기도 같이 고칠 것.
+ */
+const PORTION_TABLE = {
+  // 공기밥 210g
+  rice_cooked: 210, rice_brown: 210, rice_multigrain: 210, rice_black: 210,
+  // 면류 (삶은 것) 200g
+  noodle_wheat: 200, noodle_ramen: 200, noodle_udon: 200, noodle_soba: 200,
+  noodle_glass: 200, noodle_rice: 200, pasta_cooked: 200,
+  jjolmyeon_noodle: 200, naengmyeon_noodle: 200,
+  // 삼겹살·목살 구이 200g
+  pork_belly: 200, pork_neck: 200,
+  // 소·돼지 살코기 150g
+  beef_sirloin: 150, beef_lean: 150, pork_loin: 150, pork_shoulder: 150,
+  // 닭가슴살 120g
+  chicken_breast: 120,
+  // 생선구이 (고등어·갈치) 120g
+  mackerel: 120, hairtail: 120,
+  // 계란 1개 55g
+  egg_boiled: 55, egg_fried: 55,
+  // 나물·반찬 1접시 60g
+  spinach: 60, bean_sprout: 60, mung_sprout: 60,
+  bracken: 60, chwinamul: 60, water_parsley: 60,
+  // 김치 1접시 40g
+  kimchi: 40, kkakdugi: 40
+};
+
+Object.keys(PORTION_TABLE).forEach((id) => {
+  const food = foodsApi.get(id);
+  if (!food || !food.typicalServing) return;   // 아직 안 채운 항목은 넘긴다
+  if (food.typicalServing.amount !== PORTION_TABLE[id]) {
+    sanityNotes.push(`[1인분표] ${food.name}(${id}) ${food.typicalServing.amount}g — `
+      + `표 기준 ${PORTION_TABLE[id]}g 와 다르다`);
+  }
+});
+
+console.log(`\n[FitLog] 영양 데이터 sanity 검사 — typicalServing ${servedFoods.length}개 / 전체 ${allFoods.length}개`);
+if (sanityNotes.length) {
+  console.log(`  확인 필요 ${sanityNotes.length}건 (빌드는 막지 않는다. 값은 사람이 보고 고칠 것)`);
+  sanityNotes.forEach((note) => console.log('  · ' + note));
+} else {
+  console.log('  확인 필요 항목 없음');
+}
+
 if (summary.failed > 0 || es5Problems.length || cssProblems.length || deployProblems.length) {
   process.exitCode = 1;
 }

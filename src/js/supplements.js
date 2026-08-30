@@ -221,14 +221,34 @@ window.FitLog = window.FitLog || {};
 
   function hasTag(sup, tag) { return tagsOf(sup).indexOf(tag) >= 0; }
 
-  /** 하루치 보충제 영양소 합계. dailyDoses 를 곱한다. */
-  function dailyNutrients(supplements) {
+  /**
+   * 하루치 보충제 영양소 합계. dailyDoses 를 곱한다.
+   *
+   * 영양 판정은 '그날 체크한 것' 만 센다 (takenIds 를 넘긴다).
+   * 등록만 해두면 계산에 들어가던 때는, 오메가3 보충제를 등록한 사람에게
+   * 오메가3 부족이 **구조적으로 뜰 수 없었다** — 깜빡하고 안 먹은 날도 먹은 걸로 쳤다.
+   * 체크를 안 하면 부족으로 잡히는 게 맞다. 그래야 체크를 확인하거나
+   * 실제로 빠뜨린 걸 알아챌 수 있다.
+   *
+   * @param {Array} supplements 등록된 보충제
+   * @param {Array=} takenIds 그날 체크한 보충제 id. 생략하면 등록된 것 전부를 센다.
+   */
+  function dailyNutrients(supplements, takenIds) {
     var total = {};
     FitLog.foods.KEYS.forEach(function (k) { total[k] = 0; });
     total.protein = total.protein || 0;
 
+    // takenIds 를 넘기면 그날 체크한 것만 센다.
+    // 안 넘기면 등록된 것 전부를 센다 — 특정 날짜가 없는 자리(설정 탭의 성분 미리보기 등)용이다.
+    var only = null;
+    if (takenIds) {
+      only = {};
+      takenIds.forEach(function (id) { only[id] = true; });
+    }
+
     (supplements || []).forEach(function (sup) {
       if (!sup || sup.enabled === false) return;
+      if (only && !only[sup.id]) return;
       var doses = Number(sup.dailyDoses) || 1;
       Object.keys(sup.nutrients || {}).forEach(function (k) {
         total[k] = (total[k] || 0) + (Number(sup.nutrients[k]) || 0) * doses;

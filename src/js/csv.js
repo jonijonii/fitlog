@@ -55,7 +55,6 @@ window.FitLog = window.FitLog || {};
 
   function dailySummary(state) {
     var targets = state.targets;
-    var supp = FitLog.supplements.dailyNutrients(state.supplements);
     var activeSupps = state.supplements.filter(function (s) { return s.enabled !== false; }).length;
 
     var bodyByDate = {};
@@ -76,10 +75,11 @@ window.FitLog = window.FitLog || {};
       var log = state.dailyLogs[date] || store.emptyDay();
       var food = FitLog.foods.sum(log.meals.map(function (m) { return m.nutrients; }));
 
-      // 보충제는 매일 먹는 전제라 그날 하나라도 체크했으면 하루분을 더한다
-      var tookAny = log.supplementsTaken.length > 0;
-      var kcal = round1(food.kcal + (tookAny ? supp.kcal : 0));
-      var protein = round1(food.protein + (tookAny ? supp.protein : 0));
+      // 그날 체크한 보충제만 더한다 — 앱 판정과 같은 기준이어야 숫자가 어긋나지 않는다.
+      // (예전에는 하나라도 체크했으면 하루분 전부를 더해서, 하나만 체크한 날이 부풀었다)
+      var daySupp = FitLog.supplements.dailyNutrients(state.supplements, log.supplementsTaken);
+      var kcal = round1(food.kcal + daySupp.kcal);
+      var protein = round1(food.protein + daySupp.protein);
 
       var strengthMin = 0, cardioMin = 0;
       log.workouts.forEach(function (w) {

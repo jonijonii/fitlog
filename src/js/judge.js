@@ -82,7 +82,6 @@ window.FitLog = window.FitLog || {};
   function nutritionReport(state, endDateKey, dayCount) {
     var days = lastDays(endDateKey || FitLog.store.todayKey(), dayCount || 7);
     var targets = state.targets;
-    var supp = FitLog.supplements.dailyNutrients(state.supplements);
 
     var logged = [];
     days.forEach(function (key) {
@@ -94,15 +93,25 @@ window.FitLog = window.FitLog || {};
       return { days: days, loggedDays: 0, items: [], macros: [], avg: null };
     }
 
-    // 하루치 합계를 모아 평균낸다. 보충제는 매일 먹는 전제라 하루분을 그대로 더한다.
+    // 하루치 합계를 모아 평균낸다.
     var sums = FitLog.foods.sum(logged.map(function (key) {
       return FitLog.foods.sum(state.dailyLogs[key].meals.map(function (m) {
         return m.nutrients;
       }));
     }));
 
+    // 보충제도 날마다 다르다 — 그날 체크한 것만 세서 같이 평균낸다.
+    // 하루분을 그대로 더하면 한 번도 안 먹은 주에도 매일 먹은 것으로 잡힌다.
+    var suppSums = FitLog.foods.sum(logged.map(function (key) {
+      return FitLog.supplements.dailyNutrients(
+        state.supplements, state.dailyLogs[key].supplementsTaken);
+    }));
+
     var avg = {};
     Object.keys(sums).forEach(function (k) { avg[k] = sums[k] / logged.length; });
+
+    var supp = {};
+    Object.keys(suppSums).forEach(function (k) { supp[k] = suppSums[k] / logged.length; });
 
     // 단백질은 보충제(유청·콜라겐)에서도 오므로 매크로에 더해 준다.
     var avgWithSupp = {};
@@ -179,7 +188,10 @@ window.FitLog = window.FitLog || {};
    *
    * 주간 평균은 '요즘 어떤가' 를 보는 것이고, 오늘 화면에서 알고 싶은 건
    * '지금 뭐가 모자라고 뭐가 넘쳤나' 다. 그래서 오늘 카드는 이 함수를 쓴다.
-   * 보충제는 매일 먹는 전제라 식사 기록이 없어도 합산에 들어간다.
+   *
+   * 보충제는 **그날 체크한 것만** 합산한다. 아침에는 아직 아무것도 체크가 안 돼 있어서
+   * 보충제로 채우는 영양소가 부족으로 뜬다 — 의도한 동작이다.
+   * 체크를 안 했으면 안 먹은 것이고, 실제로 깜빡했을 수도 있다.
    */
   function todayReport(state, dateKey) {
     var key = dateKey || FitLog.store.todayKey();
@@ -187,7 +199,8 @@ window.FitLog = window.FitLog || {};
     var targets = state.targets;
 
     var food = FitLog.foods.sum(day.meals.map(function (m) { return m.nutrients; }));
-    var supp = FitLog.supplements.dailyNutrients(state.supplements);
+    // 그날 체크한 보충제만 센다. 등록만 해둔 것은 안 먹은 것으로 본다.
+    var supp = FitLog.supplements.dailyNutrients(state.supplements, day.supplementsTaken);
 
     var total = {};
     FitLog.foods.KEYS.forEach(function (k) {
