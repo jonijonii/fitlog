@@ -917,6 +917,53 @@ body.sheet-open { overflow: hidden; }
   cursor: pointer;
 }
 
+/* ---------- 부족 영양소 음식 제안 (주간 탭) ---------- */
+
+.suggest-list { margin-top: 10px; }
+
+.suggest-item {
+  padding: 10px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.suggest-item:last-child { margin-bottom: 0; }
+
+.suggest-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.suggest-name { font-size: 15px; font-weight: 600; }
+.suggest-serving { font-size: 13px; color: var(--text-dim); }
+
+.suggest-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.suggest-covers {
+  font-size: 13px;
+  color: var(--ok);
+  margin-top: 4px;
+}
+
+.suggest-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+/* 터치 타겟 44px 을 지키면서 두 버튼이 한 줄에 들어가야 한다 (기준 폭 375px) */
+.suggest-actions .suggest-btn {
+  flex: 1;
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
 /* ---------- 하단 고지 ---------- */
 
 .disclaimer {

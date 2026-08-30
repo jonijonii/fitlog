@@ -456,6 +456,9 @@ window.FitLog = window.FitLog || {};
       text: '마그네슘·비타민 E·엽산은 상한량을 보충제 유래분으로만 따져.' }));
     wrap.appendChild(microCard);
 
+    var suggestCard = suggestionCard(state, today);
+    if (suggestCard) wrap.appendChild(suggestCard);
+
     wrap.appendChild(summaryCard('이번 주 요약 보내기', {
       date: false,
       build: function () { return FitLog.report.weeklyText(store.load(), store.todayKey()); },
@@ -464,6 +467,103 @@ window.FitLog = window.FitLog || {};
 
     wrap.appendChild(ui.disclaimer());
     return wrap;
+  }
+
+  /* ---------- 부족 영양소 음식 제안 (Phase 7) ----------
+   *
+   * 계산은 suggest.js 가 한다. 여기는 그리기만.
+   * 억지로 뭔가 추천하지 않는다 — 부족한 게 없으면 null 을 돌려 카드 자체를 안 그린다.
+   */
+  function suggestionCard(state, today) {
+    var plan = FitLog.suggest.build(state, today, 7);
+    if (!plan.show) return null;
+
+    if (plan.kind === 'tooFewDays') {
+      return ui.card('뭘 먹으면 채워질까', [
+        el('p', { class: 'card-note', text: plan.message })
+      ]);
+    }
+
+    var card = ui.card('뭘 먹으면 채워질까', []);
+
+    // 보충제로 먹고 있는데도 부족한 것 — 음식 카드 위에 붙인다
+    plan.notes.forEach(function (note) {
+      card.appendChild(el('p', { class: 'alert alert-tip', text: note.message }));
+    });
+
+    if (plan.foods.length) {
+      // '이번 주' 를 밝힌다. 최근 7일을 본 판정이라 안 밝히면 방금 생긴 일처럼 읽힌다.
+      var gapNames = plan.gaps.map(function (g) {
+        return FitLog.suggest.plain(g.name);
+      }).join(' · ');
+      card.appendChild(el('p', { class: 'field-hint',
+        text: '이번 주 ' + FitLog.suggest.withParticle(gapNames, '이', '가') +
+              ' 모자랐어. 1회 섭취량 기준이야.' }));
+
+      var list = el('div', { class: 'suggest-list' });
+      plan.foods.forEach(function (item) { list.appendChild(suggestRow(item)); });
+      card.appendChild(list);
+    }
+
+    // 커버할 음식이 없는 것 — 부정확한 제안을 하느니 사실만 알린다
+    plan.uncovered.forEach(function (note) {
+      card.appendChild(el('p', { class: 'alert alert-info', text: note.message }));
+    });
+
+    // 과다는 음식을 추천하지 않고 행동 제안 한 줄만
+    plan.overs.forEach(function (note) {
+      card.appendChild(el('p', { class: 'alert alert-warn', text: note.message }));
+    });
+
+    return card;
+  }
+
+  function suggestRow(item) {
+    var covers = item.covers.map(function (c) {
+      return FitLog.suggest.plain(c.name);
+    }).join(' · ');
+
+    var fav = el('button', {
+      type: 'button', class: 'btn btn-ghost suggest-btn',
+      text: store.isFavorite('food', item.id) ? '즐겨찾기 됨' : '즐겨찾기 추가'
+    });
+    // 목록 안의 버튼은 자기 상태만 갱신한다. 전체를 다시 그리면 스크롤이 튄다.
+    fav.addEventListener('click', function () {
+      var on = store.toggleFavorite('food', item.id);
+      fav.textContent = on ? '즐겨찾기 됨' : '즐겨찾기 추가';
+      ui.toast(on ? '즐겨찾기에 넣었어' : '즐겨찾기에서 뺐어');
+    });
+
+    var log = el('button', {
+      type: 'button', class: 'btn btn-primary suggest-btn', text: '오늘 기록'
+    });
+    log.addEventListener('click', function () {
+      var food = FitLog.foods.get(item.id);
+      store.addMeal(store.todayKey(), {
+        type: 'snack',
+        sourceKind: 'food',
+        sourceId: item.id,
+        label: food.name,
+        portion: 1,
+        items: null,
+        nutrients: FitLog.foods.round(
+          FitLog.foods.scale(item.id, item.serving.amount))
+      });
+      ui.toast(food.name + ' 기록했어');
+      // 판정을 다시 계산해야 한다 — 방금 넣은 게 반영된 화면을 봐야 한다
+      FitLog.router.render();
+    });
+
+    return el('div', { class: 'suggest-item' }, [
+      el('div', { class: 'suggest-head' }, [
+        el('span', { class: 'suggest-name', text: item.name }),
+        el('span', { class: 'suggest-serving',
+          text: item.serving.label + ' (' + item.serving.amount + item.serving.unit + ')' })
+      ]),
+      el('div', { class: 'suggest-meta', text: item.kcal + 'kcal' }),
+      el('div', { class: 'suggest-covers', text: covers + ' 채움' }),
+      el('div', { class: 'suggest-actions' }, [fav, log])
+    ]);
   }
 
   /* 체중·허리둘레 라인 차트 */

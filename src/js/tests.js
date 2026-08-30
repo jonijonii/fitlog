@@ -1226,6 +1226,84 @@ window.FitLog = window.FitLog || {};
     eq('리컴프에도 loseFat 규칙이 적용된다', recompRank[0].id, 'f_light');
     ok('배열 안에 있으면 잡아낸다', recompRank[1].heavy === true);
 
+    /* ---- 부족 영양소마다 대표 한 개는 남긴다 ----
+     * 상위 6개로 자른 뒤에 커버 여부를 따지면, 채울 음식이 분명히 있는 영양소까지
+     * '음식으로 채우기 어렵다' 고 말하게 된다 — 그건 거짓말이다.
+     * 실제로 그랬다: 비타민 E 는 견과로 채워지는데 생선 카드 여섯 개에 밀려 사라졌고,
+     * 화면에는 '비타민 E는 음식으로 채우기 어려운 영양소야' 가 떴다.
+     */
+    var crowdGaps = [
+      { key: 'potassium', name: '칼륨', unit: 'mg' },
+      { key: 'iron', name: '철', unit: 'mg' },
+      { key: 'folate', name: '엽산', unit: 'µg DFE' }
+    ];
+    var crowdPool = [];
+    // 칼륨+철을 함께 커버하는 음식 8개 — 자리를 다 먹는다
+    for (var ci = 0; ci < 8; ci++) {
+      crowdPool.push(fake('f_pair' + ci, '둘커버' + ci, 50, { potassium: 600, iron: 3 }, 100));
+    }
+    // 엽산만 커버하는 음식 하나 — 순위로는 맨 아래라 잘려 나간다
+    crowdPool.push(fake('f_folate', '엽산만', 50, { folate: 80 }, 100));
+
+    var crowded = suggest.candidates(sState, crowdGaps, { foods: crowdPool, limit: 0 });
+    eq('자르기 전에는 후보가 전부 나온다', crowded.length, 9);
+    ok('순위만 보면 엽산 음식은 6번째 안에 못 든다',
+      crowded.slice(0, 6).every(function (c) { return c.id !== 'f_folate'; }));
+
+    var crowdPlan = {
+      profile: sState.profile, targets: sState.targets, supplements: [],
+      dailyLogs: sState.dailyLogs
+    };
+    var repFoods = suggest.candidates(crowdPlan, crowdGaps, { foods: crowdPool, limit: 0 });
+    var repCovered = {};
+    repFoods.forEach(function (c) {
+      c.covers.forEach(function (v) { repCovered[v.key] = true; });
+    });
+    ok('후보 전체로 보면 엽산도 커버된다', repCovered.folate === true);
+
+    eq('limit 0 은 전부를 뜻한다',
+      suggest.candidates(sState, crowdGaps, { foods: crowdPool, limit: 0 }).length, 9);
+    eq('limit 을 안 주면 6개까지',
+      suggest.candidates(sState, crowdGaps, { foods: crowdPool }).length, 6);
+
+    /* 실제 데이터로 불변식을 확인한다:
+     * '음식으로 채우기 어렵다' 고 말한 영양소는, 후보 전체를 봐도 정말 커버가 없어야 한다. */
+    // 이 블록만 기록을 채운다. 뒤의 '기록 2일' 테스트로 새어 나가면 안 된다.
+    var invSnapshot = JSON.parse(JSON.stringify(store.load()));
+    var invEnd = '2026-08-24';
+    judge.lastDays(invEnd, 7).forEach(function (dayKey) {
+      store.addMeal(dayKey, {
+        type: 'lunch', sourceKind: 'template', sourceId: 'kimchi_jjigae_rice',
+        label: '김치찌개 + 공기밥', portion: 1,
+        nutrients: foods.round(FitLog.templates.nutrients('kimchi_jjigae_rice', 1))
+      });
+    });
+
+    var invPlan = suggest.build(store.load(), invEnd, 7);
+    eq('제안이 나온다', invPlan.kind, 'suggest');
+
+    var liars = invPlan.uncovered.filter(function (note) {
+      var gap = invPlan.gaps.filter(function (g) { return g.key === note.key; })[0];
+      return suggest.candidates(store.load(), [gap], { limit: 0 }).length > 0;
+    });
+    ok('채울 음식이 있는데 못 채운다고 말하지 않는다', liars.length === 0,
+      liars.map(function (n) { return n.key; }).join(', '));
+
+    var shownKeys = {};
+    invPlan.foods.forEach(function (card) {
+      card.covers.forEach(function (c) { shownKeys[c.key] = true; });
+    });
+    var missing = invPlan.gaps.filter(function (g) {
+      if (shownKeys[g.key]) return false;
+      return suggest.candidates(store.load(), [g], { limit: 0 }).length > 0;
+    });
+    ok('채울 수 있는 영양소는 카드 한 장은 받는다', missing.length === 0,
+      missing.map(function (g) { return g.key; }).join(', '));
+    ok('그래도 6개를 넘기지 않는다', invPlan.foods.length <= 6,
+      invPlan.foods.length + '개');
+
+    store.replace(invSnapshot);
+
     /* ---- ④ 예외 케이스 ---- */
 
     // 기록이 3일 미만이면 제안하지 않는다

@@ -247,7 +247,16 @@ window.FitLog = window.FitLog || {};
       return b.avgDensity - a.avgDensity;
     });
 
-    return cards.slice(0, o.limit || MAX_CARDS);
+    var limit = o.limit === undefined ? MAX_CARDS : o.limit;
+    return limit > 0 ? cards.slice(0, limit) : cards;   // limit 0 이면 전부
+  }
+
+  function coversKey(card, key) {
+    return card.covers.some(function (c) { return c.key === key; });
+  }
+
+  function countKeys(obj) {
+    return Object.keys(obj).length;
   }
 
   /**
@@ -319,11 +328,33 @@ window.FitLog = window.FitLog || {};
       };
     }
 
-    var foodCards = gapList.length ? candidates(state, gapList) : [];
+    // 먼저 후보 전체를 순위대로 뽑는다. 잘라낸 뒤에 커버 여부를 따지면 안 된다 —
+    // 상위 6개에 못 든 것까지 '음식으로 채우기 어렵다' 고 말하게 되는데, 그건 거짓말이다.
+    var ranked = gapList.length ? candidates(state, gapList, { limit: 0 }) : [];
 
-    // 어떤 부족 영양소도 못 채운 경우 — 그 영양소는 문구로만 알린다
+    /* 부족 영양소마다 대표 한 개는 자리를 준다.
+     * 안 그러면 '2개 커버' 음식들이 여섯 자리를 다 먹고,
+     * 채울 음식이 분명히 있는 영양소가 화면에서 통째로 빠진다.
+     * (실제로 그랬다 — 비타민 E 는 아몬드로 채워지는데 생선 카드에 밀려 사라졌다) */
+    var seen = {};
+    gapList.forEach(function (gap) {
+      if (countKeys(seen) >= MAX_CARDS) return;
+      for (var i = 0; i < ranked.length; i++) {
+        if (seen[ranked[i].id]) continue;
+        if (coversKey(ranked[i], gap.key)) { seen[ranked[i].id] = true; return; }
+      }
+    });
+
+    for (var j = 0; j < ranked.length && countKeys(seen) < MAX_CARDS; j++) {
+      seen[ranked[j].id] = true;
+    }
+
+    // 표시 순서는 원래 순위를 따른다. 대표를 먼저 고른 건 자리 확보지 순서 규칙이 아니다.
+    var foodCards = ranked.filter(function (card) { return seen[card.id]; });
+
+    // 후보 전체를 봐도 못 채우는 것만 문구로 알린다
     var coveredKeys = {};
-    foodCards.forEach(function (card) {
+    ranked.forEach(function (card) {
       card.covers.forEach(function (c) { coveredKeys[c.key] = true; });
     });
 
