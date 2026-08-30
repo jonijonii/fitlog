@@ -2,13 +2,11 @@
  *
  *   node build.js && node tests/browser-tests.js
  *
- * 왜 필요한가: run-tests.js 는 계산만 확인한다. 버튼이 실제로 붙어 있는지,
- * 눌렀을 때 저장까지 가는지는 화면을 띄워야 알 수 있다.
- * (Phase 7 검증 ⑥ — '버튼은 실제로 동작해야 한다. 텍스트만 보여주면 읽고 넘긴다')
+ * 왜 필요한가: run-tests.js 는 계산만 확인한다. 계산이 실제로 화면까지 닿는지는
+ * 띄워 봐야 알 수 있다 — 함수가 맞아도 안 불리면 사용자에게는 아무것도 안 보인다.
  *
  * jsdom 을 믿지 말 것: [hidden] 우선순위를 실제 브라우저와 다르게 계산한다.
  * 화면에 보이느냐가 걸린 문제는 run-tests.js 의 CSS 검사가 소스를 직접 본다.
- * 여기서 확인하는 건 '눌렀을 때 데이터가 바뀌느냐' 다.
  */
 
 'use strict';
@@ -139,75 +137,44 @@ function run() {
   ok('주간 탭에 제안 카드가 그려졌다', !!suggestTitle,
     cards.map((c) => c.textContent).join(' / '));
 
-  const items = doc.querySelectorAll('.suggest-item');
-  ok('음식 카드가 하나 이상 있다', items.length > 0, items.length + '개');
-  ok('4~6개만 노출한다', items.length <= 6, items.length + '개');
-
-  const first = items[0];
-  ok('음식 이름이 보인다', !!first.querySelector('.suggest-name').textContent);
-  ok('1회 섭취량이 보인다',
-    first.querySelector('.suggest-serving').textContent.indexOf('(') >= 0,
-    first.querySelector('.suggest-serving').textContent);
-  ok('커버 영양소 뱃지가 보인다',
-    first.querySelector('.suggest-covers').textContent.indexOf('채움') >= 0,
-    first.querySelector('.suggest-covers').textContent);
-
-  /* ---------- 4. [오늘 기록] 을 실제로 누른다 ---------- */
-
+  /* ---------- 4. 읽을 수 있는 문장이 나오는가 ----------
+   * 버튼도 카드도 없다. 다음 주 식단을 고를 때 참고할 정보만 있으면 된다:
+   *   "이번 주엔 칼륨과 칼슘이 부족하네. 칼륨은 감자, 고구마, 시금치로 보충할 수 있어."
+   */
   const todayKey = F.store.todayKey();
-  const before = F.store.getDay(todayKey).meals.length;
-  const beforeReport = F.judge.nutritionReport(F.store.load(), todayKey, 7);
+  const card = suggestTitle.parentNode;
 
-  const buttons = Array.prototype.slice.call(first.querySelectorAll('.suggest-btn'));
-  const logBtn = buttons.filter((b) => b.textContent === '오늘 기록')[0];
-  const favBtn = buttons.filter((b) => b.textContent.indexOf('즐겨찾기') >= 0)[0];
-  ok('[오늘 기록] 버튼이 있다', !!logBtn);
-  ok('[즐겨찾기 추가] 버튼이 있다', !!favBtn);
+  const headline = card.querySelector('.suggest-headline');
+  ok('첫 줄에 뭐가 부족한지 나온다', !!headline, headline ? headline.textContent : '없음');
+  ok('이번 주라고 밝힌다',
+    headline.textContent.indexOf('이번 주엔') === 0, headline.textContent);
+  ok('부족하다고 말한다',
+    headline.textContent.indexOf('부족하네') > 0, headline.textContent);
 
-  const pickedName = first.querySelector('.suggest-name').textContent;
-  logBtn.dispatchEvent(new win.Event('click', { bubbles: true }));
+  const lines = Array.prototype.slice.call(card.querySelectorAll('.suggest-line'));
+  ok('영양소별로 한 줄씩 나온다', lines.length > 0, lines.length + '줄');
+  lines.forEach((line) => {
+    ok('보충할 수 있다고 맺는다', line.textContent.indexOf('보충할 수 있어.') > 0,
+      line.textContent);
+    ok('괄호 설명은 문장에 안 들어간다', line.textContent.indexOf('(') < 0,
+      line.textContent);
+  });
 
-  const after = F.store.getDay(todayKey).meals;
-  eq('오늘 끼니가 하나 늘었다', after.length, before + 1);
+  const plan = F.suggest.build(F.store.load(), todayKey, 7);
+  eq('화면 줄 수가 계산 결과와 같다', lines.length, plan.lines.length);
+  ok('부족 영양소는 모두 다뤄진다',
+    plan.lines.length + plan.uncovered.length === plan.gaps.length,
+    plan.gaps.map((g) => g.key).join(', '));
 
-  const added = after[after.length - 1];
-  eq('간식으로 들어간다', added.type, 'snack');
-  eq('누른 음식이 들어갔다', added.label, pickedName);
-  ok('영양소가 1회 섭취량 기준으로 계산돼 저장됐다',
-    (added.nutrients.kcal || 0) > 0, JSON.stringify(added.nutrients.kcal));
+  /* ---------- 5. 정보만 준다 — 버튼은 두지 않는다 ----------
+   * 기록 버튼을 달았다가 뺀 자리다. 목적이 '기록' 이 아니라 '참고' 라서다.
+   */
+  eq('제안 카드에 버튼이 없다', card.querySelectorAll('button').length, 0);
+  eq('음식 카드도 없다', card.querySelectorAll('.suggest-item').length, 0);
 
-  /* 추가 후 판정이 다시 계산되는지 — 화면이 새로 그려졌고 숫자가 움직였다 */
-  const afterReport = F.judge.nutritionReport(F.store.load(), todayKey, 7);
-  const movedKey = added.sourceId;
-  ok('추가 후 주간 판정이 다시 계산된다',
-    JSON.stringify(afterReport.avg) !== JSON.stringify(beforeReport.avg),
-    movedKey);
-
-  const redrawn = doc.querySelectorAll('.suggest-item');
-  ok('버튼을 누른 뒤 화면이 다시 그려졌다', redrawn.length >= 0 && redrawn[0] !== first);
-
-  /* ---------- 5. [즐겨찾기 추가] 를 실제로 누른다 ---------- */
-
-  const items2 = doc.querySelectorAll('.suggest-item');
-  ok('다시 그린 뒤에도 카드가 있다', items2.length > 0, items2.length + '개');
-
-  const row2 = items2[0];
-  const fav2 = Array.prototype.slice.call(row2.querySelectorAll('.suggest-btn'))
-    .filter((b) => b.textContent.indexOf('즐겨찾기') >= 0)[0];
-  const favId = F.suggest.build(F.store.load(), todayKey, 7).foods[0].id;
-
-  ok('누르기 전에는 즐겨찾기가 아니다', F.store.isFavorite('food', favId) === false, favId);
-  fav2.dispatchEvent(new win.Event('click', { bubbles: true }));
-  ok('누르면 즐겨찾기에 들어간다', F.store.isFavorite('food', favId) === true, favId);
-  eq('버튼 글자가 자기 자리에서 바뀐다', fav2.textContent, '즐겨찾기 됨');
-
-  // 목록이 통째로 다시 그려지지 않았는지 (스크롤·포커스가 날아가면 안 된다)
-  ok('즐겨찾기는 전체 재렌더 없이 처리된다',
-    doc.querySelectorAll('.suggest-item')[0] === row2);
-
-  fav2.dispatchEvent(new win.Event('click', { bubbles: true }));
-  ok('다시 누르면 빠진다', F.store.isFavorite('food', favId) === false);
-  eq('글자도 되돌아온다', fav2.textContent, '즐겨찾기 추가');
+  const beforeMeals = F.store.getDay(todayKey).meals.length;
+  eq('화면을 봐도 기록이 늘지 않는다',
+    F.store.getDay(todayKey).meals.length, beforeMeals);
 
   /* ---------- 6. 기록이 3일 미만이면 안내 문구만 ----------
    * 0일이 아니라 2일로 본다. 기록이 아예 없으면 주간 탭이 앞에서
@@ -228,13 +195,13 @@ function run() {
     .filter((c) => c.textContent.indexOf('뭘 먹으면') >= 0)[0];
   if (fewTitle) {
     const note = fewTitle.parentNode.querySelector('.card-note');
-    ok('기록 2일이면 음식 카드 대신 안내 문구만',
+    ok('기록 2일이면 제안 대신 안내 문구만',
       !!note && note.textContent.indexOf('기록이 더 쌓이면') >= 0,
       note ? note.textContent : '문구 없음');
   } else {
-    ok('기록 2일이면 음식 카드 대신 안내 문구만', false, '카드가 아예 없다');
+    ok('기록 2일이면 제안 대신 안내 문구만', false, '카드가 아예 없다');
   }
-  eq('기록이 적으면 음식 카드는 0개', doc.querySelectorAll('.suggest-item').length, 0);
+  eq('기록이 적으면 제안 문장은 0줄', doc.querySelectorAll('.suggest-line').length, 0);
 
   report();
 }

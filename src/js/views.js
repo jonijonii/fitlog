@@ -491,19 +491,12 @@ window.FitLog = window.FitLog || {};
       card.appendChild(el('p', { class: 'alert alert-tip', text: note.message }));
     });
 
-    if (plan.foods.length) {
-      // '이번 주' 를 밝힌다. 최근 7일을 본 판정이라 안 밝히면 방금 생긴 일처럼 읽힌다.
-      var gapNames = plan.gaps.map(function (g) {
-        return FitLog.suggest.plain(g.name);
-      }).join(' · ');
-      card.appendChild(el('p', { class: 'field-hint',
-        text: '이번 주 ' + FitLog.suggest.withParticle(gapNames, '이', '가') +
-              ' 모자랐어. 1회 섭취량 기준이야.' }));
+    // '이번 주' 를 밝힌다. 최근 7일을 본 판정이라 안 밝히면 방금 생긴 일처럼 읽힌다.
+    card.appendChild(el('p', { class: 'suggest-headline', text: plan.headline }));
 
-      var list = el('div', { class: 'suggest-list' });
-      plan.foods.forEach(function (item) { list.appendChild(suggestRow(item)); });
-      card.appendChild(list);
-    }
+    plan.lines.forEach(function (line) {
+      card.appendChild(el('p', { class: 'suggest-line', text: line.message }));
+    });
 
     // 커버할 음식이 없는 것 — 부정확한 제안을 하느니 사실만 알린다
     plan.uncovered.forEach(function (note) {
@@ -516,54 +509,6 @@ window.FitLog = window.FitLog || {};
     });
 
     return card;
-  }
-
-  function suggestRow(item) {
-    var covers = item.covers.map(function (c) {
-      return FitLog.suggest.plain(c.name);
-    }).join(' · ');
-
-    var fav = el('button', {
-      type: 'button', class: 'btn btn-ghost suggest-btn',
-      text: store.isFavorite('food', item.id) ? '즐겨찾기 됨' : '즐겨찾기 추가'
-    });
-    // 목록 안의 버튼은 자기 상태만 갱신한다. 전체를 다시 그리면 스크롤이 튄다.
-    fav.addEventListener('click', function () {
-      var on = store.toggleFavorite('food', item.id);
-      fav.textContent = on ? '즐겨찾기 됨' : '즐겨찾기 추가';
-      ui.toast(on ? '즐겨찾기에 넣었어' : '즐겨찾기에서 뺐어');
-    });
-
-    var log = el('button', {
-      type: 'button', class: 'btn btn-primary suggest-btn', text: '오늘 기록'
-    });
-    log.addEventListener('click', function () {
-      var food = FitLog.foods.get(item.id);
-      store.addMeal(store.todayKey(), {
-        type: 'snack',
-        sourceKind: 'food',
-        sourceId: item.id,
-        label: food.name,
-        portion: 1,
-        items: null,
-        nutrients: FitLog.foods.round(
-          FitLog.foods.scale(item.id, item.serving.amount))
-      });
-      ui.toast(food.name + ' 기록했어');
-      // 판정을 다시 계산해야 한다 — 방금 넣은 게 반영된 화면을 봐야 한다
-      FitLog.router.render();
-    });
-
-    return el('div', { class: 'suggest-item' }, [
-      el('div', { class: 'suggest-head' }, [
-        el('span', { class: 'suggest-name', text: item.name }),
-        el('span', { class: 'suggest-serving',
-          text: item.serving.label + ' (' + item.serving.amount + item.serving.unit + ')' })
-      ]),
-      el('div', { class: 'suggest-meta', text: item.kcal + 'kcal' }),
-      el('div', { class: 'suggest-covers', text: covers + ' 채움' }),
-      el('div', { class: 'suggest-actions' }, [fav, log])
-    ]);
   }
 
   /* 체중·허리둘레 라인 차트 */

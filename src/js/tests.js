@@ -1093,6 +1093,28 @@ window.FitLog = window.FitLog || {};
     eq('나트륨이', suggest.withParticle('나트륨', '이', '가'), '나트륨이');
     eq('목적격도 고른다', suggest.withParticle('등푸른생선', '을', '를'), '등푸른생선을');
 
+    // '으로/로' 만 규칙이 다르다 — 받침이 없거나 ㄹ 이면 '로'
+    eq('받침 없으면 로', suggest.withRo('시금치'), '시금치로');
+    eq('ㄹ 받침도 로', suggest.withRo('굴'), '굴로');
+    eq('다른 받침은 으로', suggest.withRo('김'), '김으로');
+    eq('정어리캔으로', suggest.withRo('정어리캔'), '정어리캔으로');
+    eq('목록 끝 단어를 본다', suggest.withRo('감자, 고구마, 시금치'), '감자, 고구마, 시금치로');
+
+    // 영양소 이름 잇기 — 둘이면 과/와, 셋 이상이면 쉼표
+    eq('둘이면 과', suggest.joinNutrients(['칼륨', '칼슘']), '칼륨과 칼슘');
+    eq('받침 없으면 와', suggest.joinNutrients(['오메가3 (EPA+DHA)', '비타민 D']),
+      '오메가3와 비타민 D');
+    eq('셋 이상은 쉼표', suggest.joinNutrients(['칼륨', '칼슘', '철']), '칼륨, 칼슘, 철');
+    eq('하나면 그대로', suggest.joinNutrients(['칼슘']), '칼슘');
+    eq('사용자가 말한 문장이 그대로 나온다',
+      '이번 주엔 ' + suggest.withParticle(
+        suggest.joinNutrients(['칼륨', '칼슘']), '이', '가') + ' 부족하네.',
+      '이번 주엔 칼륨과 칼슘이 부족하네.');
+    eq('음식 줄도 그대로',
+      suggest.withParticle('칼륨', '은', '는') + ' ' +
+        suggest.withRo(['감자', '고구마', '시금치'].join(', ')) + ' 보충할 수 있어.',
+      '칼륨은 감자, 고구마, 시금치로 보충할 수 있어.');
+
     /* ---- 영양밀도 (100kcal 당 함량) ---- */
     var densityFood = { per100g: { kcal: 50, potassium: 500 } };
     eq('100kcal 당으로 환산한다', suggest.density(densityFood, 'potassium'), 1000);
@@ -1290,17 +1312,34 @@ window.FitLog = window.FitLog || {};
       liars.map(function (n) { return n.key; }).join(', '));
 
     var shownKeys = {};
-    invPlan.foods.forEach(function (card) {
-      card.covers.forEach(function (c) { shownKeys[c.key] = true; });
-    });
+    invPlan.lines.forEach(function (line) { shownKeys[line.key] = true; });
     var missing = invPlan.gaps.filter(function (g) {
       if (shownKeys[g.key]) return false;
       return suggest.candidates(store.load(), [g], { limit: 0 }).length > 0;
     });
-    ok('채울 수 있는 영양소는 카드 한 장은 받는다', missing.length === 0,
+    ok('채울 수 있는 영양소는 빠짐없이 한 줄을 받는다', missing.length === 0,
       missing.map(function (g) { return g.key; }).join(', '));
-    ok('그래도 6개를 넘기지 않는다', invPlan.foods.length <= 6,
-      invPlan.foods.length + '개');
+    eq('부족 영양소 수와 줄 수가 맞는다',
+      invPlan.lines.length + invPlan.uncovered.length, invPlan.gaps.length);
+
+    /* ---- 문장 ----
+     * 사용자가 원한 건 기록 버튼이 아니라 다음 주 식단을 고를 때 볼 정보다:
+     *   "이번 주엔 칼륨과 칼슘이 부족하네. 칼륨은 감자, 고구마, 시금치로 보충할 수 있어."
+     */
+    ok('이번 주라고 밝힌다', invPlan.headline.indexOf('이번 주엔') === 0, invPlan.headline);
+    ok('부족하다고 말한다', invPlan.headline.indexOf('부족하네') > 0, invPlan.headline);
+
+    invPlan.lines.forEach(function (line) {
+      ok('영양소를 앞에 세운다 — ' + line.key,
+        line.message.indexOf(suggest.plain(line.name)) === 0, line.message);
+      ok('보충할 수 있다고 맺는다 — ' + line.key,
+        line.message.indexOf('보충할 수 있어.') > 0, line.message);
+      ok('음식 이름을 최대 3개까지 댄다 — ' + line.key,
+        line.foods.length >= 1 && line.foods.length <= suggest.PER_NUTRIENT,
+        line.foods.length + '개');
+      ok('괄호 설명은 문장에 안 넣는다 — ' + line.key,
+        line.message.indexOf('(') < 0, line.message);
+    });
 
     store.replace(invSnapshot);
 
@@ -1317,7 +1356,7 @@ window.FitLog = window.FitLog || {};
     var few = suggest.build(store.load(), fewEnd);
     eq('주간 기록 2일이면 안내 문구만', few.kind, 'tooFewDays');
     eq('기록일 수를 담는다', few.loggedDays, 2);
-    eq('음식 카드는 안 만든다', few.foods.length, 0);
+    eq('제안 문장은 안 만든다', few.lines.length, 0);
     ok('문구는 재촉하지 않는다', few.message.indexOf('기록이 더 쌓이면') >= 0, few.message);
 
     // 부족도 과다도 없으면 카드를 아예 그리지 않는다
