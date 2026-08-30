@@ -14,7 +14,7 @@ const vm = require('vm');
 
 const SRC = path.join(__dirname, '..', 'src', 'js');
 const FILES = ['env.js', 'store.js', 'nutrition.js', 'foods.js', 'templates.js',
-               'supplements.js', 'calc.js', 'judge.js', 'share.js', 'backup.js', 'csv.js', 'report.js', 'tests.js'];
+               'supplements.js', 'calc.js', 'judge.js', 'suggest.js', 'share.js', 'backup.js', 'csv.js', 'report.js', 'tests.js'];
 
 const sandbox = { console };
 
@@ -232,7 +232,15 @@ const SERVING_RANGE = {
   seasoning:  [1, 50],
   dish:       [30, 400]
 };
-const SERVING_KCAL = [3, 400];   // 한 항목이 한 끼 수준(400kcal)을 넘으면 1회분이 아니다
+/* 1회분 열량 상한도 그룹마다 다르다.
+ * 처음엔 400kcal 하나로 뒀는데, 채소 기준이라 고기 주요리가 전부 걸렸다 —
+ * 삼겹살 200g(760kcal)은 '양 조절' 표에 있는 정상 1인분이다.
+ * 하한 3kcal 은 공통 (양념 몇 g 도 통과해야 한다). */
+const SERVING_KCAL_MIN = 3;
+const SERVING_KCAL_MAX = {
+  grain: 500, meat: 900, seafood: 500, vegetable: 300, fruit: 300,
+  dairy: 400, legume_nut: 300, seasoning: 200, dish: 900
+};
 
 servedFoods.forEach((food) => {
   const srv = food.typicalServing;
@@ -243,9 +251,10 @@ servedFoods.forEach((food) => {
     sanityNotes.push(`[1회량] ${food.name}(${food.id}) ${srv.amount}${srv.unit} — `
       + `${food.group} 그룹 상식 범위 ${range[0]}~${range[1]}g 밖`);
   }
-  if (kcal < SERVING_KCAL[0] || kcal > SERVING_KCAL[1]) {
+  const kcalMax = SERVING_KCAL_MAX[food.group] || 500;
+  if (kcal < SERVING_KCAL_MIN || kcal > kcalMax) {
     sanityNotes.push(`[1회량] ${food.name}(${food.id}) ${srv.amount}${srv.unit} = `
-      + `${Math.round(kcal)}kcal — 1회분 열량 ${SERVING_KCAL[0]}~${SERVING_KCAL[1]}kcal 밖`);
+      + `${Math.round(kcal)}kcal — ${food.group} 1회분 열량 ${SERVING_KCAL_MIN}~${kcalMax}kcal 밖`);
   }
 
   // 말린 것은 부피가 크고 가벼워서 한 번에 많이 못 먹는다. 김 100g(50장쯤) 같은 값을 잡는다.

@@ -577,6 +577,79 @@ window.FitLog = window.FitLog || {};
     sunflower_seed:    [ 20, 'g', '1줌'],
     pumpkin_seed:      [ 20, 'g', '1줌'],
 
+    /* ---------- 어패류 ----------
+     * 미량영양소 추천의 주력이다. 굴·멸치는 한 접시로 철·아연·B12·오메가3 를 한꺼번에 채우고,
+     * 오메가3·비타민D·B12 는 여기가 없으면 '음식으로 채우기 어렵다' 로만 끝난다. */
+    mackerel:          [120, 'g', '1토막'],      // 1인분 표 (생선구이)
+    salmon_grilled:    [120, 'g', '1토막'],
+    salmon_sashimi:    [100, 'g', '1인분'],
+    hairtail:          [120, 'g', '1토막'],      // 1인분 표 (생선구이)
+    pollack_braised:   [120, 'g', '1토막'],
+    pollack_dried:     [ 15, 'g', '국 1그릇'],   // 마른 상태 기준
+    cod:               [120, 'g', '1토막'],
+    croaker:           [ 80, 'g', '1마리'],      // 가식부
+    gulbi:             [ 60, 'g', '1마리'],
+    saury:             [100, 'g', '1마리'],
+    sardine_canned:    [ 80, 'g', '1/2캔'],
+    tuna_canned:       [ 85, 'g', '1캔'],        // 소형 캔 기름 뺀 것
+    tuna_sashimi:      [100, 'g', '1인분'],
+    flatfish:          [100, 'g', '1인분'],
+    eel_grilled:       [120, 'g', '1인분'],
+    anchovy_dried:     [ 15, 'g', '1접시'],      // 멸치볶음. 마른 상태 기준
+    shrimp_boiled:     [ 60, 'g', '5마리'],
+    shrimp_dried:      [ 10, 'g', '1큰술'],
+    squid_boiled:      [100, 'g', '1/2마리'],
+    squid_dried:       [ 20, 'g', '1줌'],
+    octopus:           [ 80, 'g', '1접시'],
+    clam:              [ 50, 'g', '국 1그릇'],   // 살만. 껍데기 무게는 뺀다
+    mussel:            [ 50, 'g', '국 1그릇'],
+    oyster:            [ 80, 'g', '1접시'],
+    abalone:           [ 50, 'g', '1마리'],
+    crab_boiled:       [ 80, 'g', '1/2마리'],    // 가식부
+    crab_stick:        [ 30, 'g', '2개'],
+    fish_cake:         [ 50, 'g', '1장'],
+    fish_roe_flying:   [ 20, 'g', '1큰술'],
+    myeongran:         [ 25, 'g', '1개'],
+    jeotgal_shrimp:    [  5, 'g', '1작은술'],
+    sea_cucumber:      [ 50, 'g', '1접시'],
+
+    /* ---------- 육류 ---------- */
+    beef_sirloin:      [150, 'g', '1인분'],      // 1인분 표 (소·돼지 살코기)
+    beef_brisket:      [150, 'g', '1인분'],
+    beef_lean:         [150, 'g', '1인분'],      // 1인분 표
+    beef_ground:       [100, 'g', '1인분'],
+    beef_shank:        [120, 'g', '1접시'],
+    beef_short_rib:    [200, 'g', '1인분'],
+    beef_tripe:        [150, 'g', '1인분'],
+    beef_jerky:        [ 25, 'g', '1봉'],
+    bulgogi_beef:      [150, 'g', '1인분'],
+    pork_belly:        [200, 'g', '1인분'],      // 1인분 표 (삼겹살·목살)
+    pork_loin:         [150, 'g', '1인분'],      // 1인분 표
+    pork_neck:         [200, 'g', '1인분'],      // 1인분 표
+    pork_shoulder:     [150, 'g', '1인분'],      // 1인분 표
+    pork_ground:       [100, 'g', '1인분'],
+    pork_bossam:       [150, 'g', '1인분'],
+    pork_rib:          [200, 'g', '1인분'],
+    pork_cutlet:       [180, 'g', '1장'],
+    jeyuk:             [200, 'g', '1인분'],
+    blood_sausage:     [150, 'g', '1인분'],
+    chicken_breast:    [120, 'g', '1쪽'],        // 1인분 표 (닭가슴살)
+    chicken_breast_smoked: [100, 'g', '1팩'],
+    chicken_thigh:     [120, 'g', '1인분'],
+    chicken_wing:      [100, 'g', '3개'],
+    chicken_fried:     [150, 'g', '1인분'],
+    chicken_skin:      [ 30, 'g', '1접시'],
+    chicken_gizzard:   [100, 'g', '1접시'],
+    chicken_nugget:    [ 90, 'g', '5개'],
+    duck_roast:        [150, 'g', '1인분'],
+    lamb:              [150, 'g', '1인분'],
+    ham:               [ 30, 'g', '2장'],
+    sausage:           [ 50, 'g', '2개'],
+    bacon:             [ 25, 'g', '2줄'],
+    spam:              [ 50, 'g', '2조각'],
+    meatball:          [ 60, 'g', '4개'],
+    tteokgalbi:        [100, 'g', '1개'],
+
     /* ---------- 해조류 (어패류 그룹에 들어 있다) ---------- */
     dashima_dried:     [  5, 'g', '1조각']
 

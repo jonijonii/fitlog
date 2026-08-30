@@ -1075,6 +1075,276 @@ window.FitLog = window.FitLog || {};
 
     store.replace(takenSnapshot);
 
+    /* ================= Phase 7 — 부족 영양소 음식 제안 ================= */
+
+    var suggest = FitLog.suggest;
+    var suggestSnapshot = JSON.parse(JSON.stringify(store.load()));
+
+    /* ---- 조사 ----
+     * '비타민 D은(는)' 처럼 괄호가 나오면 문장이 딱딱해진다. 이 앱은 반말로 말한다. */
+    eq('받침 있으면 은', suggest.withParticle('칼슘', '은', '는'), '칼슘은');
+    eq('받침 없으면 는', suggest.withParticle('식이섬유', '은', '는'), '식이섬유는');
+    eq('괄호 설명은 떼고 본다',
+      suggest.withParticle('오메가3 (EPA+DHA)', '은', '는'), '오메가3는');
+    eq('알파벳 D 는 디라서 받침 없음',
+      suggest.withParticle('비타민 D', '은', '는'), '비타민 D는');
+    eq('B12 는 십이라서 받침 없음',
+      suggest.withParticle('비타민 B12', '은', '는'), '비타민 B12는');
+    eq('나트륨이', suggest.withParticle('나트륨', '이', '가'), '나트륨이');
+    eq('목적격도 고른다', suggest.withParticle('등푸른생선', '을', '를'), '등푸른생선을');
+
+    /* ---- 영양밀도 (100kcal 당 함량) ---- */
+    var densityFood = { per100g: { kcal: 50, potassium: 500 } };
+    eq('100kcal 당으로 환산한다', suggest.density(densityFood, 'potassium'), 1000);
+    eq('열량 0 이면 밀도는 0', suggest.density({ per100g: { kcal: 0, iron: 5 } }, 'iron'), 0);
+
+    /* ---- ② 추천 정렬 ----
+     * 실제 DB 에 마침 그런 음식이 있느냐와, 정렬 규칙이 맞느냐는 다른 문제다.
+     * 여기서는 후보를 직접 넣어 정렬만 확인한다.
+     */
+    store.reset();
+    store.update(function (s) {
+      s.profile = {
+        height: 165, age: 40, sex: 'female', weight: 60,
+        goals: ['maintain'], weeklyPlan: { strength: 2, cardio: 2 },
+        createdAt: '2026-08-01'
+      };
+      s.targets = calc.computeTargets(s.profile);
+      return s;
+    });
+    var sState = store.load();
+
+    // 목표: 칼륨 3500mg / 철 14mg / 엽산 400µg → 커버 문턱(15%)은 525 / 2.1 / 60
+    var triGaps = [
+      { key: 'potassium', name: '칼륨', unit: 'mg' },
+      { key: 'iron', name: '철', unit: 'mg' },
+      { key: 'folate', name: '엽산', unit: 'µg DFE' }
+    ];
+
+    function fake(id, name, kcal, per, gram) {
+      var p = { kcal: kcal, potassium: 0, iron: 0, folate: 0 };
+      Object.keys(per).forEach(function (k) { p[k] = per[k]; });
+      return {
+        id: id, name: name, group: 'vegetable', per100g: p,
+        typicalServing: { amount: gram === undefined ? 100 : gram, unit: 'g', label: '1접시' }
+      };
+    }
+
+    var pool = [
+      fake('f_one', '하나만', 50, { potassium: 600 }, 100),
+      fake('f_three', '셋다', 50, { potassium: 600, iron: 3, folate: 80 }, 100),
+      fake('f_two', '둘', 50, { potassium: 600, iron: 3 }, 100),
+      fake('f_none', '아무것도', 50, { potassium: 10 }, 100)
+    ];
+
+    var ranked = suggest.candidates(sState, triGaps, { foods: pool });
+    eq('커버하는 게 없으면 후보에서 빠진다', ranked.length, 3);
+    eq('셋 다 커버하는 음식이 1순위', ranked[0].id, 'f_three');
+    eq('둘 커버가 그다음', ranked[1].id, 'f_two');
+    eq('하나만 커버하는 게 아래', ranked[2].id, 'f_one');
+    eq('커버 개수를 담는다', ranked[0].coverCount, 3);
+
+    // 2차 정렬: 커버 개수가 같으면 영양밀도가 높은 쪽이 위
+    var samePool = [
+      fake('f_thin', '묽은쪽', 200, { potassium: 600 }, 100),
+      fake('f_dense', '진한쪽', 50, { potassium: 600 }, 100)
+    ];
+    var byDensity = suggest.candidates(sState, triGaps, { foods: samePool });
+    eq('커버 개수가 같으면 영양밀도가 높은 쪽이 위', byDensity[0].id, 'f_dense');
+
+    // 커버 문턱: 하루 필요량의 15% 미만이면 커버가 아니다
+    var edgePool = [
+      fake('f_just', '딱걸침', 50, { potassium: 3500 * 0.15 }, 100),
+      fake('f_under', '살짝모자람', 50, { potassium: 3500 * 0.149 }, 100)
+    ];
+    var edge = suggest.candidates(sState, triGaps, { foods: edgePool });
+    eq('15% 딱 채우면 커버', edge.length, 1);
+    eq('15% 밑이면 커버가 아니다', edge[0].id, 'f_just');
+
+    // 1회 섭취량이 없는 음식은 후보가 아니다 (100g 기준으로 추천하면 김·고춧가루가 상위를 먹는다)
+    var noServing = { id: 'f_bare', name: '1회량없음', group: 'vegetable',
+                      per100g: { kcal: 50, potassium: 3000, iron: 0, folate: 0 } };
+    eq('1회 섭취량이 없으면 후보에서 빠진다',
+      suggest.candidates(sState, triGaps, { foods: [noServing] }).length, 0);
+
+    /* ---- 실제 DB 로도 규칙이 살아 있는가 ----
+     * 정렬 규칙이 맞아도 후보군이 좁으면 그 규칙이 한 번도 안 걸린다.
+     * 채소·과일·유제품·견과만 채웠을 때 실제로 그랬다 —
+     * 다중 커버 0개, 1회량 250kcal 초과 0개라 1차 정렬과 loseFat 강등이 둘 다 죽어 있었다.
+     * 어패류·육류를 채워서 풀었고, 다시 좁아지면 여기서 걸린다.
+     */
+    var realMulti = suggest.candidates(sState, [
+      { key: 'iron', name: '철', unit: 'mg' },
+      { key: 'zinc', name: '아연', unit: 'mg' },
+      { key: 'vitaminB12', name: '비타민 B12', unit: 'µg' }
+    ], { limit: 6 });
+    ok('실제 DB 에 세 영양소를 한꺼번에 채우는 음식이 있다',
+      realMulti.length > 0 && realMulti[0].coverCount === 3,
+      realMulti.length ? realMulti[0].name + ' ' + realMulti[0].coverCount + '개' : '없음');
+
+    // 오메가3 는 EPA+DHA 기준이다. 식물성 ALA 를 0 으로 고쳐 놨으므로
+    // 커버하는 음식은 어패류(또는 생선이 든 조리 음식)뿐이어야 한다.
+    var realOmega = suggest.candidates(sState,
+      [{ key: 'omega3', name: '오메가3 (EPA+DHA)', unit: 'mg' }], { limit: 5 });
+    ok('오메가3 를 채울 음식이 실제로 있다', realOmega.length > 0);
+    ok('오메가3 커버는 어패류·해조류에서만 나온다',
+      realOmega.every(function (c) { return c.group === 'seafood' || c.group === 'dish'; }),
+      realOmega.map(function (c) { return c.name + '(' + c.group + ')'; }).join(', '));
+
+    var heavyReal = foods.all().filter(function (f) {
+      return f.typicalServing &&
+        f.per100g.kcal * f.typicalServing.amount / 100 > suggest.HIGH_KCAL;
+    });
+    ok('1회량 250kcal 초과 음식이 있다 — 하나도 없으면 loseFat 강등이 죽는다',
+      heavyReal.length > 0, heavyReal.length + '개');
+
+    /* ---- ③ 목표별 분기 ----
+     * goals 는 배열이다 — goal === 'loseFat' 같은 단일 비교를 쓰면 리컴프에서 샌다.
+     */
+    var kcalPool = [
+      fake('f_heavy', '무거운쪽', 400, { potassium: 600, iron: 3, folate: 80 }, 100),  // 400kcal
+      fake('f_light', '가벼운쪽', 100, { potassium: 600 }, 100)                        // 100kcal
+    ];
+
+    function firstIdFor(goals) {
+      var st2 = store.load();
+      st2.profile.goals = goals;
+      return suggest.candidates(st2, triGaps, { foods: kcalPool });
+    }
+
+    var loseFatRank = firstIdFor(['loseFat']);
+    eq('loseFat 이면 250kcal 초과는 상단에 안 온다', loseFatRank[0].id, 'f_light');
+    ok('제외하지 않고 아래에 둔다',
+      loseFatRank.length === 2 && loseFatRank[1].id === 'f_heavy');
+    ok('무거운 것으로 표시된다', loseFatRank[1].heavy === true);
+
+    var gainRank = firstIdFor(['gainStrength']);
+    eq('gainStrength 면 고칼로리도 커버 개수대로 정상 노출', gainRank[0].id, 'f_heavy');
+    ok('강등 표시가 없다', gainRank[0].heavy === false);
+
+    var recompRank = firstIdFor(['gainStrength', 'loseFat']);
+    eq('리컴프에도 loseFat 규칙이 적용된다', recompRank[0].id, 'f_light');
+    ok('배열 안에 있으면 잡아낸다', recompRank[1].heavy === true);
+
+    /* ---- ④ 예외 케이스 ---- */
+
+    // 기록이 3일 미만이면 제안하지 않는다
+    var fewEnd = '2026-08-24';
+    [0, 1].forEach(function (i) {
+      store.addMeal(judge.lastDays(fewEnd, 7)[i], {
+        type: 'lunch', sourceKind: 'food', sourceId: 'rice_cooked', label: '밥',
+        portion: 1, nutrients: foods.scale('rice_cooked', 210)
+      });
+    });
+    var few = suggest.build(store.load(), fewEnd);
+    eq('주간 기록 2일이면 안내 문구만', few.kind, 'tooFewDays');
+    eq('기록일 수를 담는다', few.loggedDays, 2);
+    eq('음식 카드는 안 만든다', few.foods.length, 0);
+    ok('문구는 재촉하지 않는다', few.message.indexOf('기록이 더 쌓이면') >= 0, few.message);
+
+    // 부족도 과다도 없으면 카드를 아예 그리지 않는다
+    var noGap = suggest.build({
+      profile: { goals: ['maintain'] },
+      targets: sState.targets,
+      supplements: [],
+      dailyLogs: {}
+    }, fewEnd);
+    ok('기록이 없으면 제안 단계까지 안 간다', noGap.kind === 'tooFewDays');
+
+    var perfect = { macros: [], items: [] };
+    eq('부족 영양소가 없으면 빈 목록', suggest.gaps(perfect).length, 0);
+    eq('과다도 없으면 빈 목록', suggest.overs(perfect).length, 0);
+
+    // 마그네슘 보충제 등록 + 마그네슘 부족 → 중복 안내
+    var mgState = {
+      profile: { goals: ['maintain'] },
+      targets: sState.targets,
+      supplements: [{ id: 'sup_mg', name: '마그네슘', nutrients: { magnesium: 144 }, enabled: true }]
+    };
+    ok('그 영양소를 보충제로 받고 있는지 안다',
+      suggest.hasSupplementFor(mgState, 'magnesium') === true);
+    ok('안 받는 영양소는 false',
+      suggest.hasSupplementFor(mgState, 'calcium') === false);
+    ok('일시중지한 보충제는 안 센다',
+      suggest.hasSupplementFor({ supplements: [
+        { id: 'x', nutrients: { magnesium: 144 }, enabled: false }] }, 'magnesium') === false);
+
+    // 과다는 음식을 추천하지 않고 행동 제안 한 줄만
+    var overReport = {
+      macros: [],
+      items: [{ key: 'sodium', name: '나트륨', unit: 'mg', value: 3200, target: 1500,
+                ratio: 2.13, level: judge.LEVELS.over }]
+    };
+    var overList = suggest.overs(overReport);
+    eq('과다를 집어낸다', overList.length, 1);
+    ok('이번 주라고 밝힌다', overList[0].message.indexOf('이번 주') === 0, overList[0].message);
+    ok('행동 제안이 붙는다', overList[0].message.indexOf('국물을 남기거나') >= 0,
+      overList[0].message);
+    eq('과다는 부족 목록에 안 들어간다', suggest.gaps(overReport).length, 0);
+
+    /* ---- ⑤ 부족/상한 이중 기준 ----
+     * 마그네슘·비타민E·엽산은 상한을 보충제 유래분으로만 따지지만,
+     * 부족한지는 음식까지 합친 총량으로 본다. 총량이 충분하면 제안 대상이 아니다.
+     */
+    var dualReport = {
+      macros: [],
+      items: [{
+        key: 'magnesium', name: '마그네슘', unit: 'mg',
+        value: 300,        // 음식+보충제 총량은 충분 (목표 280)
+        target: 280,
+        ratio: 300 / 280,
+        fromSupplement: 340,   // 보충제 유래분은 상한(350) 근처
+        level: judge.levelOf(300, 280, { ul: 350, ulValue: 340 })
+      }]
+    };
+    eq('총량이 충분하면 부족 목록에 없다', suggest.gaps(dualReport).length, 0);
+    ok('상한 근처지만 넘지는 않아 과다도 아니다', suggest.overs(dualReport).length === 0);
+
+    var dualOver = {
+      macros: [],
+      items: [{
+        key: 'magnesium', name: '마그네슘', unit: 'mg',
+        value: 300, target: 280, ratio: 300 / 280, fromSupplement: 400,
+        level: judge.levelOf(300, 280, { ul: 350, ulValue: 400 })
+      }]
+    };
+    eq('보충제 유래분이 상한을 넘으면 과다로 잡힌다', suggest.overs(dualOver).length, 1);
+    eq('그래도 부족 목록에는 안 들어간다', suggest.gaps(dualOver).length, 0);
+
+    /* ---- 부족 상위 3개만, 부족한 순으로 ---- */
+    function gapRow(key, name, ratio) {
+      return { key: key, name: name, unit: 'mg', value: ratio * 100, target: 100,
+               ratio: ratio, level: judge.levelOf(ratio * 100, 100) };
+    }
+    var manyGaps = suggest.gaps({
+      macros: [],
+      items: [gapRow('calcium', '칼슘', 0.85), gapRow('iron', '철', 0.2),
+              gapRow('zinc', '아연', 0.5), gapRow('folate', '엽산', 0.75)]
+    });
+    eq('상위 3개만 쓴다', manyGaps.length, 3);
+    eq('가장 부족한 것이 먼저', manyGaps[0].key, 'iron');
+    eq('그다음', manyGaps[1].key, 'zinc');
+    ok('가장 덜 부족한 것은 잘린다',
+      manyGaps.every(function (g) { return g.key !== 'calcium'; }));
+
+    // 매크로는 단백질·식이섬유만. 칼로리는 제외한다
+    var macroGaps = suggest.gaps({
+      macros: [
+        { key: 'kcal', name: '칼로리', unit: 'kcal', value: 30, target: 100,
+          ratio: 0.3, level: judge.LEVELS.low },
+        { key: 'protein', name: '단백질', unit: 'g', value: 50, target: 100,
+          ratio: 0.5, level: judge.LEVELS.low },
+        { key: 'fiber', name: '식이섬유', unit: 'g', value: 60, target: 100,
+          ratio: 0.6, level: judge.LEVELS.low }
+      ],
+      items: []
+    });
+    eq('매크로 부족도 대상이다', macroGaps.length, 2);
+    ok('칼로리는 추천 대상이 아니다',
+      macroGaps.every(function (g) { return g.key !== 'kcal'; }));
+
+    store.replace(suggestSnapshot);
+
     /* 총량을 말할 때 하루 필요량 대비를 항상 같이 말한다 */
     var naItem = tr.items.filter(function (i) { return i.key === 'sodium'; })[0];
     var naMsg = judge.itemMessage(naItem);
