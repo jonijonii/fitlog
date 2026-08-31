@@ -6456,6 +6456,11 @@ window.FitLog = window.FitLog || {};
 
   var SEX_LABEL = { female: '여성', male: '남성' };
 
+  /* 설정 탭에서 펼쳐 둔 보충제. 화면을 다시 그려도 펼침 상태를 잃지 않게 한다.
+     보충제를 고치면 재렌더가 일어나는데(상호작용 조언이 같이 바뀌어야 한다),
+     그때 패널이 접히면 방금 한 일이 안 보인다. */
+  var openSupplements = {};
+
   function soon(text) {
     return el('p', { class: 'notice notice-info', text: text });
   }
@@ -7687,7 +7692,10 @@ window.FitLog = window.FitLog || {};
       existing.forEach(function (k) { patch[k] = item.nutrients[k]; });
       patch[pick.value] = v;
 
+      var added = sup.fieldMeta(pick.value);
       store.updateSupplement(item.id, { nutrients: patch });
+      // 눌렀는데 아무 말이 없으면 안 된 줄 안다. 실제로 그 신고를 받았다.
+      ui.toast(added.label + ' ' + v + added.unit + ' 추가했어');
       FitLog.router.render();
     });
 
@@ -7701,9 +7709,13 @@ window.FitLog = window.FitLog || {};
   function supplementEditRow(item) {
     var sup = FitLog.supplements;
     var preset = item.presetId ? sup.getPreset(item.presetId) : null;
-    var open = false;
 
-    var body = el('div', { class: 'sup-edit-body', hidden: true });
+    // 펼침 상태는 재렌더를 넘어 유지한다. 안 그러면 성분을 추가하는 순간
+    // 화면이 다시 그려지면서 패널이 접혀, 저장은 됐는데 아무 일도 안 난 것처럼 보인다.
+    // (실제로 '성분 추가가 안 된다' 는 신고를 받았고, 값은 정상 저장되고 있었다.)
+    var open = !!openSupplements[item.id];
+
+    var body = el('div', { class: 'sup-edit-body', hidden: !open });
 
     var head = el('button', { type: 'button', class: 'sup-edit-head' }, [
       el('span', { class: 'sup-edit-name' + (item.enabled === false ? ' sup-off' : ''),
@@ -7714,6 +7726,7 @@ window.FitLog = window.FitLog || {};
     head.addEventListener('click', function () {
       open = !open;
       body.hidden = !open;
+      openSupplements[item.id] = open;
     });
 
     /* 시간대 */
@@ -7769,6 +7782,7 @@ window.FitLog = window.FitLog || {};
           var patch = {};
           keys.forEach(function (k) { if (k !== key) patch[k] = item.nutrients[k]; });
           store.updateSupplement(item.id, { nutrients: patch });
+          ui.toast(meta.label + ' 뺐어');
           FitLog.router.render();
         });
 
@@ -7778,8 +7792,14 @@ window.FitLog = window.FitLog || {};
         ]));
       });
     } else {
+      /* 코엔자임Q10·루테인·밀크씨슬처럼 프리셋인데 성분이 비어 있는 게 있다.
+         이 앱은 KDRI 14종 + 단백질 + 칼로리만 세는데 그 목록에 없는 성분이라서다.
+         '왜 비어 있지' 로 읽히지 않게 이유를 적는다 — 실제로 버그로 신고받았다. */
       body.appendChild(el('p', { class: 'field-hint',
-        text: '아직 성분이 없어. 아래에서 추가하면 하루 합계와 상한량 판정에 반영돼.' }));
+        text: '이 앱은 KDRI 영양소 14종과 단백질·칼로리만 세. ' +
+              (preset ? preset.name + ' 자체는 거기 없어서 비어 있어. ' : '') +
+              '제품에 비타민·미네랄이 같이 들었으면 아래에서 추가해 줘 — ' +
+              '하루 합계와 상한량 판정에 반영돼.' }));
     }
 
     body.appendChild(addNutrientControl(item));
@@ -7856,7 +7876,7 @@ window.FitLog = window.FitLog || {};
   var DEFAULT_TAB = 'today';
 
   // 빌드를 구분하는 표식. 폰이 캐시된 옛 버전을 잡고 있는지 설정 탭에서 확인할 수 있다.
-  var BUILD = '2026-08-31.19';
+  var BUILD = '2026-08-31.20';
 
   /* ---------- 에러 표시 ----------
      조용히 멈추는 게 가장 나쁘다. 잡히지 않은 예외를 화면에 띄워
