@@ -275,6 +275,55 @@ function run() {
     F.store.load().supplements.filter((x) => x.id === 'sup_q10')[0].nutrients.vitaminC,
     undefined);
 
+  /* ---------- 8. 오늘 탭 링에 보충제가 반영되는가 ----------
+   * 신고: "보충제에서 단백질 파우더를 먹으면 맨 위 칼로리·단백질 대시보드에 포함이 안 돼."
+   * 링은 끼니만 세고 아래 알림 카드는 보충제를 세고 있어서, 한 화면에 숫자가 두 개였다.
+   * 단위 테스트는 views.js 를 못 본다 — 이건 띄워야 잡힌다.
+   */
+  const st8 = F.store.load();
+  st8.supplements = [{ id: 'w1', name: '유청 단백질', presetId: 'whey_protein',
+                       timeSlot: 'postWorkout', dailyDoses: 1,
+                       nutrients: { protein: 24, kcal: 120 }, enabled: true }];
+  st8.dailyLogs = {};
+  F.store.replace(st8);
+
+  const dayKey = F.store.todayKey();
+  F.store.addMeal(dayKey, {
+    type: 'lunch', sourceKind: 'food', sourceId: 'rice_cooked', label: '밥 (백미)',
+    portion: 1, nutrients: F.foods.round(F.foods.scale('rice_cooked', 210))
+  });
+
+  function ringLabels() {
+    win.location.hash = '#today';
+    F.router.render();
+    return Array.prototype.slice.call(doc.querySelectorAll('svg[role="img"]'))
+      .map((n) => n.getAttribute('aria-label'));
+  }
+
+  const before8 = ringLabels();
+  ok('오늘 탭에 칼로리·단백질 링이 있다', before8.length >= 2, before8.join(' / '));
+  const proteinBefore = before8.filter((l) => l.indexOf('단백질') === 0)[0];
+
+  F.store.toggleTaken(dayKey, 'w1');
+  const after8 = ringLabels();
+  const proteinAfter = after8.filter((l) => l.indexOf('단백질') === 0)[0];
+  const kcalAfter = after8.filter((l) => l.indexOf('칼로리') === 0)[0];
+
+  ok('보충제를 체크하면 단백질 링이 움직인다', proteinBefore !== proteinAfter,
+    proteinBefore + '  ->  ' + proteinAfter);
+  ok('단백질 24g 이 더해진다', proteinAfter.indexOf('29') >= 0, proteinAfter);
+  ok('칼로리 120kcal 도 더해진다', kcalAfter.indexOf('393') >= 0, kcalAfter);
+
+  // 링이 끼니 합보다 큰 이유를 화면에서 설명하는지
+  const notes = Array.prototype.slice.call(doc.querySelectorAll('.card-note'))
+    .map((n) => n.textContent);
+  ok('보충제 몫을 설명하는 줄이 있다',
+    notes.some((t) => t.indexOf('체크한 보충제에서') >= 0), notes.join(' | '));
+
+  F.store.toggleTaken(dayKey, 'w1');
+  const back8 = ringLabels().filter((l) => l.indexOf('단백질') === 0)[0];
+  eq('체크를 풀면 원래대로', back8, proteinBefore);
+
   report();
 }
 

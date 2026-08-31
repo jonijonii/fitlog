@@ -257,6 +257,36 @@ window.FitLog = window.FitLog || {};
     return FitLog.foods.sum(day.meals.map(function (m) { return m.nutrients; }));
   }
 
+  /**
+   * 하루 영양소 합계 — 끼니 + **그날 체크한 보충제**.
+   *
+   * 화면에 보이는 숫자는 전부 이걸 써야 한다. `dayNutrients()` 는 끼니만 더한다.
+   * 오늘 탭 상단 링이 끼니만 세는 바람에, 유청 단백질(24g/120kcal)을 먹고 체크해도
+   * 칼로리·단백질이 그대로였다. 같은 화면 아래 알림 카드는 보충제를 세고 있어서
+   * **한 화면에 서로 다른 숫자가 두 개** 있었다.
+   *
+   * 스펙: '단백질 보충제는 protein(g)/kcal 도 채워서 매크로 합계에 반영되게 한다.'
+   */
+  function dayTotals(dateKey) {
+    var key = dateKey || todayKey();
+    var day = getDay(key);
+
+    var food = FitLog.foods.sum(day.meals.map(function (m) { return m.nutrients; }));
+    var supp = FitLog.supplements.dailyNutrients(load().supplements, day.supplementsTaken);
+
+    var out = {};
+    FitLog.foods.KEYS.forEach(function (k) {
+      out[k] = (Number(food[k]) || 0) + (Number(supp[k]) || 0);
+    });
+    return out;
+  }
+
+  /** 그날 체크한 보충제에서 온 몫만. 숫자가 왜 늘었는지 설명할 때 쓴다. */
+  function daySupplementNutrients(dateKey) {
+    var day = getDay(dateKey);
+    return FitLog.supplements.dailyNutrients(load().supplements, day.supplementsTaken);
+  }
+
   /* ---------- 운동 기록 ---------- */
 
   function addWorkout(dateKey, workout) {
@@ -505,6 +535,8 @@ window.FitLog = window.FitLog || {};
     addMeal: addMeal,
     removeMeal: removeMeal,
     dayNutrients: dayNutrients,
+    dayTotals: dayTotals,
+    daySupplementNutrients: daySupplementNutrients,
     addWorkout: addWorkout,
     removeWorkout: removeWorkout,
     saveBodyLog: saveBodyLog,

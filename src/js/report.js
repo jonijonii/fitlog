@@ -67,7 +67,9 @@ window.FitLog = window.FitLog || {};
     var t = state.targets;
     var p = parts(key);
 
-    var eaten = FitLog.foods.sum(day.meals.map(function (m) { return m.nutrients; }));
+    // 끼니 + 그날 체크한 보충제. 앱 화면과 같은 숫자여야 한다
+    var eaten = store.dayTotals(key);
+    var supp = store.daySupplementNutrients(key);
     var lines = [];
 
     lines.push(p.m + '월 ' + p.d + '일 (' + dayName(key) + ')');
@@ -76,6 +78,14 @@ window.FitLog = window.FitLog || {};
     lines.push('단백질  ' + one(eaten.protein) + ' / ' + t.protein + ' g');
     lines.push('탄수 ' + one(eaten.carbs) + 'g · 지방 ' + one(eaten.fat) +
                'g · 식이섬유 ' + one(eaten.fiber) + 'g');
+
+    /* 보충제에서 온 매크로는 한 줄로 밝힌다.
+       안 밝히면 끼니 목록을 아무리 더해도 위 합계가 안 나와 트레이너가 헷갈린다.
+       제품 이름은 적지 않는다 — 보충제 상세는 공유 카드에서 빼는 게 원칙이다. */
+    if (supp.protein > 0 || supp.kcal > 0) {
+      lines.push('그중 보충제  단백질 ' + one(supp.protein) + 'g · ' +
+                 comma(Math.round(supp.kcal)) + 'kcal');
+    }
 
     if (day.meals.length) {
       lines.push('');

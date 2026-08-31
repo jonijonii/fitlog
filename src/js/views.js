@@ -34,7 +34,9 @@ window.FitLog = window.FitLog || {};
     var state = store.load();
     var t = state.targets;
     var day = store.getDay();
-    var eaten = FitLog.foods.round(store.dayNutrients());
+    // 끼니 + 그날 체크한 보충제. 아래 알림 카드와 같은 기준이어야 한다
+    var eaten = FitLog.foods.round(store.dayTotals());
+    var fromSupp = FitLog.foods.round(store.daySupplementNutrients());
     var wrap = el('div');
 
     wrap.appendChild(el('h1', { class: 'screen-title', text: '오늘' }));
@@ -50,7 +52,13 @@ window.FitLog = window.FitLog || {};
         macroCell('지방', eaten.fat, t.fat, 'g'),
         macroCell('식이섬유', eaten.fiber, t.fiber, 'g'),
         macroCell('나트륨', Math.round(eaten.sodium), 2300, 'mg')
-      ])
+      ]),
+      // 끼니 합보다 큰 이유를 알려 준다. 유청 단백질은 한 스쿱이 24g 이라 비중이 크다
+      (fromSupp.protein > 0 || fromSupp.kcal > 0)
+        ? el('p', { class: 'card-note',
+            text: '체크한 보충제에서 단백질 ' + fromSupp.protein + 'g · ' +
+                  Math.round(fromSupp.kcal) + 'kcal 이 같이 들어가 있어.' })
+        : null
     ]));
 
     wrap.appendChild(mealsCard(day));

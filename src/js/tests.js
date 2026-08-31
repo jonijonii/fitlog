@@ -570,6 +570,58 @@ window.FitLog = window.FitLog || {};
 
     eq('기록 없는 날은 합계 0', Math.round(store.dayNutrients('2020-01-01').kcal), 0);
 
+    /* ---- 화면에 보이는 합계는 끼니 + 체크한 보충제 ----
+     * 오늘 탭 상단 링이 끼니만 세는 바람에, 유청 단백질(24g/120kcal)을 먹고 체크해도
+     * 칼로리·단백질이 그대로였다. 같은 화면 아래 알림 카드는 보충제를 세고 있어서
+     * 한 화면에 서로 다른 숫자가 두 개 있었다.
+     * 스펙: '단백질 보충제는 protein/kcal 도 채워서 매크로 합계에 반영되게 한다.'
+     */
+    var totalsSnapshot = JSON.parse(JSON.stringify(store.load()));
+    store.reset();
+    store.update(function (st) {
+      st.profile = { height: 170, age: 35, sex: 'male', weight: 70,
+                     goals: ['gainStrength'], weeklyPlan: { strength: 3, cardio: 2 },
+                     createdAt: '2026-08-01' };
+      st.targets = calc.computeTargets(st.profile);
+      st.supplements = [{ id: 'w1', name: '유청 단백질', presetId: 'whey_protein',
+                          timeSlot: 'postWorkout', dailyDoses: 1,
+                          nutrients: { protein: 24, kcal: 120 }, enabled: true }];
+      return st;
+    });
+
+    var tKey = store.todayKey();
+    store.addMeal(tKey, {
+      type: 'lunch', sourceKind: 'food', sourceId: 'rice_cooked', label: '밥',
+      portion: 1, nutrients: foods.round(foods.scale('rice_cooked', 210))
+    });
+
+    var mealsOnly = Math.round(store.dayNutrients(tKey).kcal);
+    eq('체크 전에는 끼니 합과 같다', Math.round(store.dayTotals(tKey).kcal), mealsOnly);
+    eq('체크 전 보충제 몫은 0', store.daySupplementNutrients(tKey).protein, 0);
+
+    store.toggleTaken(tKey, 'w1');
+    eq('체크하면 칼로리에 더해진다',
+      Math.round(store.dayTotals(tKey).kcal), mealsOnly + 120);
+    near('단백질도 더해진다',
+      store.dayTotals(tKey).protein, store.dayNutrients(tKey).protein + 24, 0.01);
+    eq('보충제 몫을 따로 알 수 있다', store.daySupplementNutrients(tKey).protein, 24);
+    eq('dayNutrients 는 끼니만 그대로', Math.round(store.dayNutrients(tKey).kcal), mealsOnly);
+
+    // 트레이너 요약도 같은 숫자여야 한다. 다르면 앱과 보고서가 어긋난다
+    var dText = FitLog.report.dailyText(store.load(), tKey);
+    ok('요약 칼로리가 화면과 같다',
+      dText.indexOf(String(mealsOnly + 120)) >= 0, dText.split('\n')[2]);
+    ok('보충제에서 온 몫을 한 줄로 밝힌다',
+      dText.indexOf('그중 보충제') >= 0 && dText.indexOf('단백질 24g') >= 0,
+      dText.split('\n')[5]);
+    ok('제품 이름은 안 적는다 — 보충제 상세는 공유 카드에서 뺀다',
+      dText.indexOf('유청') < 0);
+
+    store.toggleTaken(tKey, 'w1');
+    eq('체크를 풀면 다시 빠진다', Math.round(store.dayTotals(tKey).kcal), mealsOnly);
+
+    store.replace(totalsSnapshot);
+
     /* 즐겨찾기 */
     ok('처음엔 즐겨찾기가 아니다', !store.isFavorite('template', 'kimchi_jjigae_rice'));
     ok('켜면 즐겨찾기가 된다', store.toggleFavorite('template', 'kimchi_jjigae_rice') === true);
