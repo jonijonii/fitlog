@@ -755,6 +755,35 @@ window.FitLog = window.FitLog || {};
   var UNCOMMON_SET = {};
   UNCOMMON.forEach(function (id) { UNCOMMON_SET[id] = true; });
 
+  /* ---------- 제안에 올리지 않는 음식 (avoidSuggest) ----------
+   *
+   * **제안 목록은 먹고 싶게 만든다.** 사용자 피드백: "튀김도 빼줘. 보면 먹고싶어지거든."
+   * 순서를 뒤로 미는 걸로는 부족하다 — 화면에 이름이 뜨는 것 자체가 권하는 것이다.
+   *
+   * 그래서 튀김·가공육·과자류는 영양소가 아무리 맞아도 제안에 올리지 않는다.
+   * 실제로 '비타민 E는 돈까스, 닭튀김, 감자튀김으로 보충할 수 있어' 가 나왔었다.
+   * 계산은 맞다(튀김유에 비타민 E 가 많다). 그래도 할 말은 아니다.
+   *
+   * **음식 DB 에서 지우는 게 아니다.** 기록·검색·계산에는 그대로 쓴다.
+   * 먹은 걸 못 적게 만들면 안 된다 — 여기서 빼는 건 '더 먹으라고 권하는 자리' 뿐이다.
+   */
+  var AVOID_SUGGEST = [
+    // 튀김
+    'french_fries', 'chicken_fried', 'pork_cutlet', 'chicken_nugget',
+
+    // 가공육
+    'ham', 'sausage', 'bacon', 'spam', 'meatball', 'tteokgalbi', 'blood_sausage',
+
+    // 가공 수산물
+    'crab_stick', 'fish_cake',
+
+    // 과자·디저트
+    'ice_cream', 'muffin', 'bread_cream', 'bread_red_bean', 'croissant'
+  ];
+
+  var AVOID_SET = {};
+  AVOID_SUGGEST.forEach(function (id) { AVOID_SET[id] = true; });
+
   /* ---------- 조회 헬퍼 ---------- */
 
   var LIST = [];
@@ -777,6 +806,9 @@ window.FitLog = window.FitLog || {};
 
         // 흔한 음식인가 — 제안 순서에 쓴다. 안 흔한 것만 따로 적어 두고 나머지는 흔한 것으로 본다
         food.common = !UNCOMMON_SET[food.id];
+
+        // 제안 목록에 올려도 되는가. 기록·검색에는 영향이 없다
+        food.avoidSuggest = !!AVOID_SET[food.id];
 
         LIST.push(food);
         BY_ID[food.id] = food;

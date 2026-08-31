@@ -1174,14 +1174,20 @@ window.FitLog = window.FitLog || {};
     var byDensity = suggest.candidates(sState, triGaps, { foods: samePool });
     eq('커버 개수가 같으면 영양밀도가 높은 쪽이 위', byDensity[0].id, 'f_dense');
 
-    // 커버 문턱: 하루 필요량의 15% 미만이면 커버가 아니다
+    /* 커버 문턱: 하루 필요량의 8% 미만이면 커버가 아니다.
+     * 15% 였다가 낮췄다 — 1인분이 큰 음식(고기 200g)을 구조적으로 밀어올려서
+     * '칼륨은 삼겹살로 보충할 수 있어' 가 나왔다. 문턱은 자격 심사일 뿐이고
+     * 순서는 영양밀도가 정하므로, 낮춰도 묽은 음식이 위로 오지는 않는다. */
+    var ratio = suggest.COVER_RATIO;
+    eq('문턱은 8%', ratio, 0.08);
+
     var edgePool = [
-      fake('f_just', '딱걸침', 50, { potassium: 3500 * 0.15 }, 100),
-      fake('f_under', '살짝모자람', 50, { potassium: 3500 * 0.149 }, 100)
+      fake('f_just', '딱걸침', 50, { potassium: 3500 * ratio }, 100),
+      fake('f_under', '살짝모자람', 50, { potassium: 3500 * (ratio - 0.001) }, 100)
     ];
     var edge = suggest.candidates(sState, triGaps, { foods: edgePool });
-    eq('15% 딱 채우면 커버', edge.length, 1);
-    eq('15% 밑이면 커버가 아니다', edge[0].id, 'f_just');
+    eq('문턱을 딱 채우면 커버', edge.length, 1);
+    eq('문턱 밑이면 커버가 아니다', edge[0].id, 'f_just');
 
     // 1회 섭취량이 없는 음식은 후보가 아니다 (100g 기준으로 추천하면 김·고춧가루가 상위를 먹는다)
     var noServing = { id: 'f_bare', name: '1회량없음', group: 'vegetable',
@@ -1263,8 +1269,55 @@ window.FitLog = window.FitLog || {};
     ok('칼슘 목록 앞쪽은 흔한 음식이다',
       realCalcium.slice(0, 5).every(function (c) { return c.common; }),
       realCalcium.slice(0, 5).map(function (c) { return c.name; }).join(', '));
-    ok('우유가 칼슘 목록에 있다',
-      realCalcium.some(function (c) { return c.id === 'milk'; }));
+    ok('유제품이 칼슘 목록에 있다',
+      realCalcium.some(function (c) { return foods.get(c.id).group === 'dairy'; }),
+      realCalcium.map(function (c) { return c.name; }).join(', '));
+
+    /* ---- 권하는 자리에 올리면 안 되는 음식 ----
+     * 사용자 피드백: "튀김도 빼줘. 보면 먹고싶어지거든."
+     * 순서를 미루는 걸로는 부족하다 — 이름이 뜨는 것 자체가 권하는 것이다.
+     * 실제로 '비타민 E는 돈까스, 닭튀김, 감자튀김으로 보충할 수 있어' 가 나왔었다.
+     */
+    ['french_fries', 'pork_cutlet', 'chicken_fried', 'chicken_nugget',
+     'ice_cream', 'bacon', 'sausage', 'ham', 'spam'].forEach(function (id) {
+      ok('제안에 안 올린다 — ' + foods.get(id).name, foods.get(id).avoidSuggest === true);
+    });
+
+    // 그래도 음식 DB 에는 남아 있어야 한다. 먹은 걸 못 적게 만들면 안 된다
+    ok('튀김도 검색·기록에는 그대로 있다',
+      !!foods.get('french_fries') && foods.get('french_fries').per100g.kcal > 0);
+    ok('일반 음식은 제안 대상이다', foods.get('spinach').avoidSuggest === false);
+
+    var avoidLeak = [];
+    ['vitaminE', 'potassium', 'iron', 'calcium', 'zinc', 'protein', 'fiber']
+      .forEach(function (key) {
+        suggest.foodsFor(sState, { key: key, name: key, unit: '' }, { limit: 0 })
+          .forEach(function (c) {
+            if (foods.get(c.id).avoidSuggest) avoidLeak.push(key + ':' + c.name);
+          });
+      });
+    ok('어느 영양소에서도 튀김·가공육이 새어 나오지 않는다', avoidLeak.length === 0,
+      avoidLeak.join(', '));
+
+    /* ---- 순서는 영양밀도가 정한다 ----
+     * 절대량으로 줄 세우면 1인분이 큰 고기가 채소를 이긴다.
+     * 시금치는 100kcal 당 칼륨이 삼겹살의 25배인데 1접시가 60g 이라 총량으로는 진다.
+     * '칼륨이 많은 음식' 이라는 상식은 밀도 기준이다.
+     */
+    var kalium = suggest.foodsFor(sState, { key: 'potassium', name: '칼륨', unit: 'mg' });
+    var kaliumNames = kalium.map(function (c) { return suggest.plain(c.name); });
+    ok('칼륨은 채소·과일이 앞에 온다',
+      kaliumNames.indexOf('시금치') >= 0, kaliumNames.join(', '));
+    ok('고기가 칼륨 목록을 점령하지 않는다',
+      kalium.filter(function (c) { return foods.get(c.id).group === 'meat'; }).length <= 2,
+      kaliumNames.join(', '));
+
+    var densePool = [
+      fake('f_bulk', '많이먹는묽은것', 400, { potassium: 700 }, 100),   // 총량 크고 밀도 낮음
+      fake('f_dense2', '조금먹는진한것', 40, { potassium: 400 }, 100)   // 총량 작고 밀도 높음
+    ];
+    var byDense = suggest.foodsFor(sState, potGap, { foods: densePool });
+    eq('총량이 아니라 밀도로 줄 세운다', byDense[0].id, 'f_dense2');
 
     /* ---- ③ 목표별 분기 ----
      * goals 는 배열이다 — goal === 'loseFat' 같은 단일 비교를 쓰면 리컴프에서 샌다.

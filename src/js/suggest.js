@@ -26,8 +26,16 @@ window.FitLog = window.FitLog || {};
   'use strict';
 
   /* 1회 섭취량이 하루 필요량의 이 비율 이상이면 그 영양소를 '커버' 한 것으로 본다.
-     15% 는 '한 접시로 눈에 띄게 채워진다' 는 뜻이고, 더 낮추면 아무거나 다 걸린다. */
-  var COVER_RATIO = 0.15;
+   *
+   * 처음엔 15% 였는데 낮췄다. 15% 는 **1인분이 큰 음식을 구조적으로 밀어올린다** —
+   * 칼륨 목표가 3,500mg 이라 한 접시로 525mg 을 넘기려면 200g 씩 먹는 고기여야 했고,
+   * 그래서 '칼륨은 삼겹살, 제육볶음, 소갈비로 보충할 수 있어' 가 나왔다.
+   * 시금치는 100kcal 당 칼륨이 삼겹살의 25배인데 1접시가 60g 이라 탈락했다.
+   *
+   * 8% 는 '한 번 먹어서 눈에 띄게 채워지는' 하한이다. 이 문턱은 **자격 심사**일 뿐이고,
+   * 순서는 영양밀도가 정한다 — 낮춰도 묽은 음식이 위로 오지 않는다.
+   */
+  var COVER_RATIO = 0.08;
 
   var TOP_GAPS = 3;      // 부족 영양소는 상위 3개만 본다
   /* 영양소 하나에 음식 10개까지 이름을 댄다.
@@ -226,7 +234,8 @@ window.FitLog = window.FitLog || {};
 
     pool.forEach(function (food) {
       var srv = food.typicalServing;
-      if (!srv) return;   // 1회 섭취량이 없으면 후보가 아니다
+      if (!srv) return;         // 1회 섭취량이 없으면 후보가 아니다
+      if (food.avoidSuggest) return;   // 튀김·가공육·과자는 권하는 자리에 올리지 않는다
 
       var covers = [];
       var densitySum = 0;
@@ -291,9 +300,11 @@ window.FitLog = window.FitLog || {};
    * '효율은 좋지만 실제로 안 먹는' 것이 위를 차지한다. 그러면 제안이 쓸모없어진다.
    * 안 흔한 것을 빼지는 않는다 — 흔한 것으로 자리가 안 차면 뒤에 붙는다.
    *
-   * 2차는 1회 섭취량이 하루 필요량의 몇 %를 채우느냐다.
-   * (여러 영양소를 한꺼번에 보던 때는 커버 개수가 1차였는데, 영양소별로 나눠 보면
-   *  개수가 전부 1이라 의미가 없다.)
+   * **2차는 영양밀도(100kcal 당 함량)다.** 절대량(1회분이 필요량의 몇 %냐)으로 줄 세웠더니
+   * 1인분이 큰 고기가 채소를 이겼다 — 삼겹살 200g 이 시금치 1접시보다 칼륨 총량이 많다.
+   * 하지만 '칼륨이 많은 음식' 이라는 상식은 밀도 기준이고(시금치가 삼겹살의 25배),
+   * 같은 열량이면 뭘 먹는 게 이득이냐가 이 화면에서 알고 싶은 것이다.
+   * 절대량은 자격 심사(COVER_RATIO)에서만 쓴다.
    */
   function foodsFor(state, gap, opts) {
     var o = opts || {};
@@ -303,7 +314,7 @@ window.FitLog = window.FitLog || {};
     ranked.sort(function (a, b) {
       if (a.heavy !== b.heavy) return a.heavy ? 1 : -1;   // 감량 중이면 무거운 건 뒤로
       if (a.common !== b.common) return a.common ? -1 : 1;
-      return b.covers[0].pct - a.covers[0].pct;
+      return b.avgDensity - a.avgDensity;
     });
 
     return limit > 0 ? ranked.slice(0, limit) : ranked;
