@@ -80,6 +80,12 @@ function seedState() {
     createdAt: '2026-08-01'
   };
   state.targets = F.calc.computeTargets(state.profile);
+  // 성분이 비어 있는 보충제. 설정 탭의 '성분 추가' 를 눌러 볼 대상이다
+  // (코엔자임Q10 처럼 KDRI 목록에 없는 프리셋은 nutrients 가 비어 있다).
+  state.supplements = [
+    { id: 'sup_q10', name: '코엔자임Q10', presetId: 'coq10', timeSlot: 'lunch',
+      dailyDoses: 1, nutrients: {}, enabled: true }
+  ];
   F.store.replace(state);
 
   // 최근 7일 내내 밥만 먹은 기록 — 미량영양소가 넓게 모자라 제안 카드가 뜬다
@@ -202,6 +208,72 @@ function run() {
     ok('기록 2일이면 제안 대신 안내 문구만', false, '카드가 아예 없다');
   }
   eq('기록이 적으면 제안 문장은 0줄', doc.querySelectorAll('.suggest-line').length, 0);
+
+  /* ---------- 7. 설정 → 보충제 성분 추가 ----------
+   * '성분 추가가 안 된다' 는 신고를 받은 자리다. 값은 정상 저장되고 있었는데,
+   * 재렌더로 펼친 패널이 접히고 토스트도 없어서 아무 일도 안 난 것처럼 보였다.
+   * 저장만 확인하면 이 버그를 못 잡는다 — 화면이 어떻게 되는지까지 봐야 한다.
+   */
+  win.location.hash = '#settings';
+  F.router.render();
+
+  const heads = Array.prototype.slice.call(doc.querySelectorAll('.sup-edit-head'));
+  const q10Head = heads.filter((h) => h.textContent.indexOf('코엔자임') >= 0)[0];
+  ok('설정에 보충제 편집 행이 있다', !!q10Head,
+    heads.map((h) => h.textContent.trim()).join(' | '));
+
+  const q10Body = q10Head.parentNode.querySelector('.sup-edit-body');
+  ok('처음엔 접혀 있다', q10Body.hidden === true);
+  q10Head.dispatchEvent(new win.Event('click', { bubbles: true }));
+  ok('누르면 펼쳐진다', q10Body.hidden === false);
+
+  const pick = Array.prototype.slice.call(q10Body.querySelectorAll('select'))
+    .filter((x) => x.getAttribute('aria-label') === '추가할 성분')[0];
+  const amountInput = Array.prototype.slice.call(q10Body.querySelectorAll('input'))
+    .filter((x) => x.getAttribute('aria-label') === '함량')[0];
+  const addBtn = Array.prototype.slice.call(q10Body.querySelectorAll('button'))
+    .filter((x) => x.textContent === '성분 추가')[0];
+
+  ok('성분 고르기 목록이 있다', !!pick && pick.options.length > 1,
+    pick ? pick.options.length + '개' : '없음');
+  ok('함량 칸이 있다', !!amountInput);
+  ok('성분 추가 버튼이 있다', !!addBtn);
+
+  pick.value = 'vitaminC';
+  amountInput.value = '500';
+  addBtn.dispatchEvent(new win.Event('click', { bubbles: true }));
+
+  const q10After = F.store.load().supplements.filter((x) => x.id === 'sup_q10')[0];
+  eq('성분이 저장된다', q10After.nutrients.vitaminC, 500);
+
+  const bodyAfter = Array.prototype.slice.call(doc.querySelectorAll('.sup-edit-head'))
+    .filter((h) => h.textContent.indexOf('코엔자임') >= 0)[0]
+    .parentNode.querySelector('.sup-edit-body');
+  ok('추가한 뒤에도 패널이 열려 있다 — 접히면 안 된 줄 안다',
+    bodyAfter.hidden === false);
+  ok('추가했다고 알려 준다',
+    (doc.getElementById('toast').textContent || '').indexOf('추가했어') >= 0,
+    doc.getElementById('toast').textContent);
+
+  const rows = Array.prototype.slice.call(bodyAfter.querySelectorAll('.nut-label'));
+  ok('추가한 성분이 목록에 보인다',
+    rows.some((r) => r.textContent.indexOf('비타민 C') >= 0),
+    rows.map((r) => r.textContent).join(', '));
+
+  // 같은 성분을 또 고를 수 없어야 한다
+  const pick2 = Array.prototype.slice.call(bodyAfter.querySelectorAll('select'))
+    .filter((x) => x.getAttribute('aria-label') === '추가할 성분')[0];
+  ok('이미 넣은 성분은 목록에서 빠진다',
+    Array.prototype.slice.call(pick2.options)
+      .every((o) => o.value !== 'vitaminC'));
+
+  // 빼기도 되는지
+  const del = bodyAfter.querySelector('.nut-del');
+  ok('성분 빼기 버튼이 있다', !!del);
+  del.dispatchEvent(new win.Event('click', { bubbles: true }));
+  eq('빼면 사라진다',
+    F.store.load().supplements.filter((x) => x.id === 'sup_q10')[0].nutrients.vitaminC,
+    undefined);
 
   report();
 }
